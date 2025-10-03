@@ -155,7 +155,7 @@ def get_service():
     request_token_url = f"{args.api_db_url}/oauth/get_request_token"
     access_token_url = f"{args.api_db_url}/oauth/get_access_token"
     return OAuth1Service(
-        name="BIGSdb_downloader",
+        name=USER_AGENT,
         consumer_key=client_key,
         consumer_secret=client_secret,
         request_token_url=request_token_url,
