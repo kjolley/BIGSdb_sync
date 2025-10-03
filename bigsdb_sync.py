@@ -10,7 +10,7 @@
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 #
-# BIGSdb_downloader is distributed in the hope that it will be useful,
+# BIGSdb_sync is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
@@ -23,6 +23,7 @@ import re
 import configparser
 import json
 from pathlib import Path
+from urllib.parse import parse_qs
 from bigsdb.script import Script
 from rauth import OAuth1Service, OAuth1Session
 
@@ -33,6 +34,11 @@ BASE_WEB = {
 }
 
 parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--add_new_loci",
+    action="store_true",
+    help="Set up new loci if they do not exist in local database.",
+)
 parser.add_argument(
     "--api_db_url",
     required=True,
@@ -63,9 +69,6 @@ parser.add_argument(
     "--schemes", required=False, help="Comma-separated list of scheme ids."
 )
 parser.add_argument(
-    "--setup", action="store_true", help="Initial setup to obtain access token."
-)
-parser.add_argument(
     "--token_dir",
     required=False,
     default="./.bigsdb_tokens",
@@ -84,21 +87,15 @@ def main():
     check_required_args()
     check_token_dir(args.token_dir)
 
-    if args.setup:
-        (access_token, access_secret) = get_new_access_token()
-        if not access_token or not access_secret:
-            sys.exit("Cannot get new access token.")
     (token, secret) = retrieve_token("session")
     if not token or not secret:
         (token, secret) = get_new_session_token()
-    check_db_types_match(token, secret)
+    db_type = check_db_types_match(token, secret)
+    if db_type == "seqdef":
+        update_seqdef(token, secret)
 
 
 def check_required_args():
-    if args.cron and args.setup:
-        sys.exit(
-            "You cannot run --setup with --cron option. Interactive steps are required."
-        )
     if not re.search(r"^https?://.*/db/[A-Za-z0-9_-]+$", args.api_db_url):
         sys.exit(
             "--api_db_url should be a valid URL (starting with http(s):// and\n"
@@ -247,7 +244,7 @@ def get_new_access_token():
     web_base_url = get_base_web()
     if args.cron:
         sys.stderr.write(f"No access token saved for {args.key_name}.\n")
-        sys.stderr.write("Run interactively to set.\n")
+        sys.stderr.write("Run interactively to set (without --cron).\n")
         sys.exit(1)
     file_path = Path(f"{args.token_dir}/access_tokens")
     (request_token, request_secret) = get_new_request_token()
@@ -263,7 +260,7 @@ def get_new_access_token():
         request_token,
         request_secret,
         params={"oauth_verifier": verifier},
-        headers={"User-Agent": "BIGSdb downloader"},
+        headers={"User-Agent": USER_AGENT},
     )
     if r.status_code == 200:
         token = r.json()["oauth_token"]
@@ -400,6 +397,46 @@ def check_db_types_match(token, secret):
         sys.exit(
             f"Remote db type: {remote}; Local db type: {local}. DATABASE MISMATCH!"
         )
+    return local
+
+
+def get_remote_locus_list(token, secret, schemes: [int] = None):
+    locus_urls = []
+    if schemes:
+        for scheme_id in schemes:
+            scheme_loci = get_route(
+                f"{args.api_db_url}/schemes/{scheme_id}/loci", token, secret
+            )
+            if scheme_loci["loci"]:
+                locus_urls.extend(scheme_loci["loci"])
+            locus_urls = list(dict.fromkeys(locus_urls))
+    else:
+        loci = get_route(f"{args.api_db_url}/loci?return_all=1", token, secret)
+        if loci["loci"]:
+            locus_urls.extend(loci["loci"])
+    return locus_urls
+
+
+def update_seqdef(token, secret):
+    selected_schemes = get_selected_scheme_list()
+    remote_locus_urls = get_remote_locus_list(token, secret, selected_schemes)
+    remote_loci = extract_locus_names_from_urls(remote_locus_urls)
+    print(remote_loci)
+
+
+def extract_locus_names_from_urls(urls):
+    return [url.rstrip("/").split("/")[-1] for url in urls]
+
+
+def get_selected_scheme_list():
+    if args.schemes:
+        try:
+            scheme_list = sorted(
+                {int(scheme_id.strip()) for scheme_id in args.schemes.split(",")}
+            )
+        except ValueError as e:
+            sys.exit("Error: invalid non-integer value found in --schemes argument.")
+        return scheme_list
 
 
 if __name__ == "__main__":
