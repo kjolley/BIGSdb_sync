@@ -57,6 +57,9 @@ parser.add_argument(
 )
 parser.add_argument("--loci", required=False, help="Comma-separated list of loci.")
 parser.add_argument(
+    "--quiet", required=False, help="Suppress output except for errors."
+)
+parser.add_argument(
     "--schemes", required=False, help="Comma-separated list of scheme ids."
 )
 parser.add_argument(
@@ -80,6 +83,7 @@ except Exception as e:
 def main():
     check_required_args()
     check_token_dir(args.token_dir)
+
     if args.setup:
         (access_token, access_secret) = get_new_access_token()
         if not access_token or not access_secret:
@@ -87,9 +91,7 @@ def main():
     (token, secret) = retrieve_token("session")
     if not token or not secret:
         (token, secret) = get_new_session_token()
-    # Testing
-    page = get_route(url=args.api_db_url, token=token, secret=secret)
-    print(page)
+    check_db_types_match(token, secret)
 
 
 def check_required_args():
@@ -349,7 +351,7 @@ def get_route(
     if r.status_code == 200 or r.status_code == 201:
 
         if re.search("json", r.headers["content-type"], flags=0):
-            return json.dumps(r.json())
+            return r.json()
         else:
             return r.text
     elif r.status_code == 400:
@@ -365,7 +367,7 @@ def get_route(
             (token, secret) = get_new_session_token()
             get_route(url, token, secret)
     else:
-        sys.stderr.write(f"Error: {r.text}\n")
+        sys.stderr.write(f"Error from API: {r.text}\n")
         sys.exit(1)
 
 
@@ -383,6 +385,21 @@ def trim_url_args(url):
             processed_params[k] = v[0]  # Keep the original value if it's not an integer
 
     return trimmed_url, processed_params
+
+
+def check_db_types_match(token, secret):
+    response = get_route(args.api_db_url, token, secret)
+    if "isolates" in response:
+        remote = "isolates"
+    elif "sequences" in response:
+        remote = "seqdef"
+    else:
+        sys.exit("Cannot determine remote database type.")
+    local = get_db_type()
+    if remote != local:
+        sys.exit(
+            f"Remote db type: {remote}; Local db type: {local}. DATABASE MISMATCH!"
+        )
 
 
 if __name__ == "__main__":
