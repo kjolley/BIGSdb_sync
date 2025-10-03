@@ -21,6 +21,7 @@ import os
 import stat
 import re
 import configparser
+import json
 from pathlib import Path
 from bigsdb.script import Script
 from rauth import OAuth1Service, OAuth1Session
@@ -82,7 +83,13 @@ def main():
     if args.setup:
         (access_token, access_secret) = get_new_access_token()
         if not access_token or not access_secret:
-            raise PermissionError("Cannot get new access token.")
+            sys.exit("Cannot get new access token.")
+    (token, secret) = retrieve_token("session")
+    if not token or not secret:
+        (token, secret) = get_new_session_token()
+    # Testing
+    page = get_route(url=args.api_db_url, token=token, secret=secret)
+    print(page)
 
 
 def check_required_args():
@@ -155,6 +162,65 @@ def get_service():
         access_token_url=access_token_url,
         base_url=args.api_db_url,
     )
+
+
+def retrieve_token(token_type):
+    file_path = Path(f"{args.token_dir}/{token_type}_tokens")
+    if file_path.is_file():
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(file_path)
+        if config.has_section(args.key_name):
+            token = config[args.key_name]["token"]
+            secret = config[args.key_name]["secret"]
+            return (token, secret)
+    return (None, None)
+
+
+def get_new_session_token():
+    file_path = Path(f"{args.token_dir}/session_tokens")
+    (access_token, access_secret) = retrieve_token("access")
+    if not access_token or not access_secret:
+        (access_token, access_secret) = get_new_access_token()
+    service = get_service()
+    (client_key, client_secret) = get_client_credentials()
+    db = get_db_value()
+    url = f"{args.api_db_url}/oauth/get_session_token"
+    session_request = OAuth1Session(
+        client_key,
+        client_secret,
+        access_token=access_token,
+        access_token_secret=access_secret,
+    )
+    r = session_request.get(url, headers={"User-Agent": USER_AGENT})
+    if r.status_code == 200:
+        token = r.json()["oauth_token"]
+        secret = r.json()["oauth_token_secret"]
+        config = configparser.ConfigParser(interpolation=None)
+        if file_path.is_file():
+            config.read(file_path)
+        config[args.key_name] = {"token": token, "secret": secret}
+        with open(file_path, "w") as configfile:
+            config.write(configfile)
+
+        return (token, secret)
+    else:
+        sys.stderr.write(
+            "Failed to get new session token. " + r.json()["message"] + "\n"
+        )
+        if args.cron:
+            sys.stderr.write("Run interactively to fix.\n")
+        if re.search("verification", r.json()["message"]) or re.search(
+            "Invalid access token", r.json()["message"]
+        ):
+            sys.stderr.write("New access token required - removing old one.\n")
+            config = configparser.ConfigParser(interpolation=None)
+            file_path = Path(f"{args.token_dir}/access_tokens")
+            if file_path.is_file():
+                config.read(file_path)
+                config.remove_section(args.key_name)
+                with open(file_path, "w") as configfile:
+                    config.write(configfile)
+        sys.exit(1)
 
 
 def get_new_request_token():
@@ -246,6 +312,77 @@ def get_client_credentials():
         with open(file_path, "w") as configfile:
             config.write(configfile)
     return client_id, client_secret
+
+
+def get_route(
+    url,
+    token,
+    secret,
+    method="GET",
+    json_body={},
+):
+    (client_key, client_secret) = get_client_credentials()
+    session = OAuth1Session(
+        client_key, client_secret, access_token=token, access_token_secret=secret
+    )
+    trimmed_url, request_params = trim_url_args(url)
+    if method == "GET":
+        r = session.get(
+            trimmed_url,
+            params=request_params,
+            headers={"User-Agent": USER_AGENT},
+        )
+    else:
+        if not is_valid_json(json_body):
+            parser.error("Body does not contain valid JSON")
+        r = session.post(
+            trimmed_url,
+            params=request_params,
+            data=json_body,
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": USER_AGENT,
+            },
+            header_auth=True,
+        )
+
+    if r.status_code == 200 or r.status_code == 201:
+
+        if re.search("json", r.headers["content-type"], flags=0):
+            return json.dumps(r.json())
+        else:
+            return r.text
+    elif r.status_code == 400:
+        sys.stderr.write("Bad request - " + r.json()["message"])
+        sys.exit(1)
+    elif r.status_code == 401:
+        if re.search("unauthorized", r.json()["message"]):
+            sys.stderr.write("Access denied - client is unauthorized\n")
+            sys.exit(1)
+        else:
+            sys.stderr.write(r.json()["message"] + "\n")
+            sys.stderr.write("Invalid session token, requesting new one...\n")
+            (token, secret) = get_new_session_token()
+            get_route(url, token, secret)
+    else:
+        sys.stderr.write(f"Error: {r.text}\n")
+        sys.exit(1)
+
+
+def trim_url_args(url):
+    if not "?" in url:
+        return url, {}
+    trimmed_url, param_string = url.split("?")
+    params = parse_qs(param_string)
+
+    processed_params = {}
+    for k, v in params.items():
+        try:
+            processed_params[k] = int(v[0])
+        except ValueError:
+            processed_params[k] = v[0]  # Keep the original value if it's not an integer
+
+    return trimmed_url, processed_params
 
 
 if __name__ == "__main__":
