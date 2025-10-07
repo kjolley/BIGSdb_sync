@@ -479,7 +479,7 @@ def get_route(
 
 
 def trim_url_args(url):
-    if not "?" in url:
+    if "?" not in url:
         return url, {}
     trimmed_url, param_string = url.split("?")
     params = parse_qs(param_string)
