@@ -226,7 +226,7 @@ def get_db_value():
     if match:
         db = match.group(1)
     else:
-        raiseValueError("No db value found in the URL.")
+        raise ValueError("No db value found in the URL.")
     return db
 
 
