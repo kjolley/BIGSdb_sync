@@ -77,6 +77,7 @@ class TokenProvider:
         config[self.key_name] = {"token": token, "secret": secret}
         with open(file_path, "w") as fh:
             config.write(fh)
+        os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
 
     def get(self):
         with self._lock:
@@ -179,7 +180,7 @@ def main():
     try:
         script = Script(database=args.db)
     except Exception as e:
-        sys.exit(f"Error setting up script object for config {args.db}.")
+        sys.exit(f"Error setting up script object for config {args.db}. {e}")
 
     provider = TokenProvider(args.token_dir, args.key_name, token_type="session")
     token, secret = provider.get()
@@ -289,8 +290,9 @@ def get_new_session_token():
     )
     r = session_request.get(url, headers={"User-Agent": USER_AGENT})
     if r.status_code == 200:
-        token = r.json()["oauth_token"]
-        secret = r.json()["oauth_token_secret"]
+        response_json = get_response_content(r)
+        token = response_json.get("oauth_token", "")
+        secret = response_json.get("oauth_token_secret", "")
         config = configparser.ConfigParser(interpolation=None)
         if file_path.is_file():
             config.read(file_path)
@@ -300,14 +302,15 @@ def get_new_session_token():
 
         return (token, secret)
     else:
-        sys.stderr.write(
-            "Failed to get new session token. " + r.json()["message"] + "\n"
-        )
+        try:
+            payload = r.json()
+        except ValueError:
+            payload = {}
+        msg = payload.get("message", "") if isinstance(payload, dict) else ""
+        sys.stderr.write(f"Failed to get new session token. {msg}\n")
         if args.cron:
             sys.stderr.write("Run interactively to fix.\n")
-        if re.search("verification", r.json()["message"]) or re.search(
-            "Invalid access token", r.json()["message"]
-        ):
+        if re.search("verification", msg) or re.search("Invalid access token", msg):
             sys.stderr.write("New access token required - removing old one.\n")
             config = configparser.ConfigParser(interpolation=None)
             file_path = Path(f"{args.token_dir}/access_tokens")
@@ -317,6 +320,21 @@ def get_new_session_token():
                 with open(file_path, "w") as configfile:
                     config.write(configfile)
         sys.exit(1)
+
+
+def get_response_content(r):
+    content_type = r.headers.get("content-type", "")
+    if "json" in content_type.lower():
+        try:
+            return r.json()
+        except ValueError:
+            sys.stderr.write("Response declared JSON but could not parse JSON.\n")
+            sys.exit(1)
+    # fallback: try JSON anyway then fallback to text
+    try:
+        return r.json()
+    except Exception:
+        return r.text
 
 
 def get_new_request_token():
@@ -330,11 +348,17 @@ def get_new_request_token():
     if r.status_code == 404:
         sys.exit(f"404 Page not found. {args.api_db_url}.")
     if r.status_code == 200:
-        token = r.json()["oauth_token"]
-        secret = r.json()["oauth_token_secret"]
+        response_json = get_response_content(r)
+        token = response_json.get("oauth_token", "")
+        secret = response_json.get("oauth_token_secret", "")
         return (token, secret)
     else:
-        sys.exit("Failed to get new request token." + r.json()["message"])
+        try:
+            payload = r.json()
+        except ValueError:
+            payload = {}
+        msg = payload.get("message", "") if isinstance(payload, dict) else ""
+        sys.exit(f"Failed to get new request token. {msg}")
 
 
 def get_new_access_token():
@@ -360,8 +384,9 @@ def get_new_access_token():
         headers={"User-Agent": USER_AGENT},
     )
     if r.status_code == 200:
-        token = r.json()["oauth_token"]
-        secret = r.json()["oauth_token_secret"]
+        response_json = get_response_content(r)
+        token = response_json.get("oauth_token", "")
+        secret = response_json.get("oauth_token_secret", "")
         file_path = Path(f"{args.token_dir}/access_tokens")
         print("Access Token:        " + token)
         print("Access Token Secret: " + secret + "\n")
@@ -377,7 +402,12 @@ def get_new_access_token():
             config.write(configfile)
         return (token, secret)
     else:
-        sys.stderr.write("Failed to get new access token." + r.json()["message"])
+        try:
+            payload = r.json()
+        except ValueError:
+            payload = {}
+        msg = payload.get("message", "") if isinstance(payload, dict) else ""
+        sys.stderr.write(f"Failed to get new access token. {msg}")
         sys.exit(1)
 
 
@@ -447,12 +477,14 @@ def get_route(
             )
 
         if r.status_code in (200, 201):
-            if re.search("json", r.headers["content-type"], flags=0):
-                return r.json()
-            else:
-                return r.text
+            return get_response_content(r)
         elif r.status_code == 400:
-            sys.stderr.write("Bad request - " + r.json()["message"])
+            try:
+                payload = r.json()
+            except ValueError:
+                payload = {}
+            msg = payload.get("message", "") if isinstance(payload, dict) else ""
+            sys.stderr.write(f"Bad request - {msg}")
             sys.exit(1)
         elif r.status_code == 401:
             try:
@@ -469,7 +501,7 @@ def get_route(
                         "Invalid session token and refresh attempts exhausted.\n"
                     )
                     sys.exit(1)
-                sys.stderr.write(r.json()["message"] + "\n")
+                sys.stderr.write(f"{msg}\n")
                 sys.stderr.write("Invalid session token, requesting new one...\n")
                 token_provider.refresh(get_new_session_token)
                 continue
