@@ -169,16 +169,17 @@ parser.add_argument(
 
 
 args = parser.parse_args()
-try:
-    self = Script(database=args.db)
-except Exception as e:
-    sys.exit(f"Error setting up script object for config {args.db}.")
 
 
 def main():
-    global provider
+    global provider, script
     check_required_args()
     check_token_dir(args.token_dir)
+
+    try:
+        script = Script(database=args.db)
+    except Exception as e:
+        sys.exit(f"Error setting up script object for config {args.db}.")
 
     provider = TokenProvider(args.token_dir, args.key_name, token_type="session")
     token, secret = provider.get()
@@ -211,7 +212,7 @@ def get_base_web():
 
 def get_db_type():
     try:
-        db_type = self.datastore.run_query(
+        db_type = script.datastore.run_query(
             "SELECT value FROM db_attributes WHERE field=?", "type"
         )
     except ValueError as e:
@@ -530,12 +531,12 @@ def get_local_locus_list(schemes: [int] = None):
     loci = []
     if schemes:
         for scheme_id in schemes:
-            scheme_loci = self.datastore.get_scheme_loci(scheme_id)
+            scheme_loci = script.datastore.get_scheme_loci(scheme_id)
             if scheme_loci:
                 loci.extend(scheme_loci)
         loci = list(dict.fromkeys(loci))
     else:
-        loci = self.datastore.get_loci()
+        loci = script.datastore.get_loci()
     return loci
 
 
