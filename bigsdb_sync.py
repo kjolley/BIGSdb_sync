@@ -478,6 +478,14 @@ def get_route(
             sys.exit(1)
 
 
+def is_valid_json(json_string):
+    try:
+        json.loads(json_string)
+        return True
+    except ValueError:
+        return False
+
+
 def trim_url_args(url):
     if "?" not in url:
         return url, {}
