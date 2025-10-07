@@ -32,6 +32,7 @@ BASE_WEB = {
     "PubMLST": "https://pubmlst.org/bigsdb",
     "Pasteur": "https://bigsdb.pasteur.fr/cgi-bin/bigsdb/bigsdb.pl",
 }
+MAX_REFRESH_ATTEMPTS = 1
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -320,52 +321,67 @@ def get_route(
     method="GET",
     json_body={},
 ):
+    print(url)
     (client_key, client_secret) = get_client_credentials()
-    session = OAuth1Session(
-        client_key, client_secret, access_token=token, access_token_secret=secret
-    )
-    trimmed_url, request_params = trim_url_args(url)
-    if method == "GET":
-        r = session.get(
-            trimmed_url,
-            params=request_params,
-            headers={"User-Agent": USER_AGENT},
+    attempts = 0
+    while True:
+        session = OAuth1Session(
+            client_key, client_secret, access_token=token, access_token_secret=secret
         )
-    else:
-        if not is_valid_json(json_body):
-            parser.error("Body does not contain valid JSON")
-        r = session.post(
-            trimmed_url,
-            params=request_params,
-            data=json_body,
-            headers={
-                "Content-Type": "application/json",
-                "User-Agent": USER_AGENT,
-            },
-            header_auth=True,
-        )
-
-    if r.status_code == 200 or r.status_code == 201:
-
-        if re.search("json", r.headers["content-type"], flags=0):
-            return r.json()
+        trimmed_url, request_params = trim_url_args(url)
+        if method == "GET":
+            r = session.get(
+                trimmed_url,
+                params=request_params,
+                headers={"User-Agent": USER_AGENT},
+            )
         else:
-            return r.text
-    elif r.status_code == 400:
-        sys.stderr.write("Bad request - " + r.json()["message"])
-        sys.exit(1)
-    elif r.status_code == 401:
-        if re.search("unauthorized", r.json()["message"]):
-            sys.stderr.write("Access denied - client is unauthorized\n")
+            if not is_valid_json(json_body):
+                parser.error("Body does not contain valid JSON")
+            r = session.post(
+                trimmed_url,
+                params=request_params,
+                data=json_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": USER_AGENT,
+                },
+                header_auth=True,
+            )
+
+        if r.status_code == 200 or r.status_code == 201:
+
+            if re.search("json", r.headers["content-type"], flags=0):
+                return r.json()
+            else:
+                return r.text
+        elif r.status_code == 400:
+            sys.stderr.write("Bad request - " + r.json()["message"])
             sys.exit(1)
+        elif r.status_code == 401:
+            try:
+                msg = r.json().get("message", "")
+            except Exception:
+                msg = r.text or ""
+            if "unauthorized" in msg.lower():
+                sys.stderr.write("Access denied - client is unauthorized\n")
+                sys.exit(1)
+            else:
+                attempts += 1
+                if attempts > MAX_REFRESH_ATTEMPTS:
+                    sys.stderr.write(
+                        "Invalid session token and refresh attempts exhausted.\n"
+                    )
+                    sys.exit(1)
+                sys.stderr.write(r.json()["message"] + "\n")
+                sys.stderr.write("Invalid session token, requesting new one...\n")
+                print(f"Old token: {token}; secret: {secret}")
+                token, secret = get_new_session_token()
+                print(f"New token: {token}; secret: {secret}")
+                continue
         else:
-            sys.stderr.write(r.json()["message"] + "\n")
-            sys.stderr.write("Invalid session token, requesting new one...\n")
-            (token, secret) = get_new_session_token()
-            get_route(url, token, secret)
-    else:
-        sys.stderr.write(f"Error from API: {r.text}\n")
-        sys.exit(1)
+            sys.stderr.write(f"Error from API: {r.text}\n")
+            sys.exit(1)
 
 
 def trim_url_args(url):
@@ -409,7 +425,7 @@ def get_remote_locus_list(token, secret, schemes: [int] = None):
             )
             if scheme_loci["loci"]:
                 locus_urls.extend(scheme_loci["loci"])
-            locus_urls = list(dict.fromkeys(locus_urls))
+        locus_urls = list(dict.fromkeys(locus_urls))
     else:
         loci = get_route(f"{args.api_db_url}/loci?return_all=1", token, secret)
         if loci["loci"]:
@@ -417,11 +433,28 @@ def get_remote_locus_list(token, secret, schemes: [int] = None):
     return locus_urls
 
 
+def get_local_locus_list(schemes: [int] = None):
+    loci = []
+    if schemes:
+        for scheme_id in schemes:
+            scheme_loci = self.datastore.get_scheme_loci(scheme_id)
+            if scheme_loci:
+                loci.extend(scheme_loci)
+        loci = list(dict.fromkeys(loci))
+    else:
+        loci = self.datastore.get_loci()
+    return loci
+
+
 def update_seqdef(token, secret):
     selected_schemes = get_selected_scheme_list()
     remote_locus_urls = get_remote_locus_list(token, secret, selected_schemes)
     remote_loci = extract_locus_names_from_urls(remote_locus_urls)
-    print(remote_loci)
+    local_loci = get_local_locus_list(selected_schemes)
+    remote_count = len(remote_loci)
+    local_count = len(local_loci)
+    if remote_count != local_count:
+        print(f"Remote loci: {remote_count}; Local loci: {local_count}")
 
 
 def extract_locus_names_from_urls(urls):

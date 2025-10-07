@@ -3,7 +3,7 @@
 Client software for synchronising sequence definition and isolate databases 
 with a remote BIGSdb installation via the API using OAuth authentication.
 
-## Installation
+# Installation
 It is recommended that you install this in a virtual environment, e.g.
 
 ```
