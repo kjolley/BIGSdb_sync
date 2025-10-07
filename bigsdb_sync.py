@@ -31,6 +31,52 @@ from rauth import OAuth1Service, OAuth1Session
 
 session_provider = None
 access_provider = None
+args = None
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--add_new_loci",
+        action="store_true",
+        help="Set up new loci if they do not exist in local database.",
+    )
+    parser.add_argument(
+        "--api_db_url",
+        required=True,
+        help="URL for the top-level database API call, e.g. https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef",
+    )
+    parser.add_argument(
+        "--base_web_url",
+        required=False,
+        help="URL to BIGSdb script on target web site. This is only needed to set up the access token.\n"
+        "It should not be necessary to set this for PubMLST or BIGSdb Pasteur.",
+    )
+    parser.add_argument(
+        "--cron",
+        action="store_true",
+        help="Script is being run as a CRON job or non-interactively.",
+    )
+    parser.add_argument("--db", required=True, help="Local database config name.")
+    parser.add_argument(
+        "--key_name",
+        required=True,
+        help="Name of API key - use a different name for each site.",
+    )
+    parser.add_argument("--loci", required=False, help="Comma-separated list of loci.")
+    parser.add_argument(
+        "--quiet", required=False, help="Suppress output except for errors."
+    )
+    parser.add_argument(
+        "--schemes", required=False, help="Comma-separated list of scheme ids."
+    )
+    parser.add_argument(
+        "--token_dir",
+        required=False,
+        default="./.bigsdb_tokens",
+        help="Directory into which keys and tokens will be saved.",
+    )
+    return parser.parse_args()
 
 
 class TokenProvider:
@@ -127,54 +173,10 @@ BASE_WEB = {
 }
 MAX_REFRESH_ATTEMPTS = 1
 
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    "--add_new_loci",
-    action="store_true",
-    help="Set up new loci if they do not exist in local database.",
-)
-parser.add_argument(
-    "--api_db_url",
-    required=True,
-    help="URL for the top-level database API call, e.g. https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef",
-)
-parser.add_argument(
-    "--base_web_url",
-    required=False,
-    help="URL to BIGSdb script on target web site. This is only needed to set up the access token.\n"
-    "It should not be necessary to set this for PubMLST or BIGSdb Pasteur.",
-)
-parser.add_argument(
-    "--cron",
-    action="store_true",
-    help="Script is being run as a CRON job or non-interactively.",
-)
-parser.add_argument("--db", required=True, help="Local database config name.")
-parser.add_argument(
-    "--key_name",
-    required=True,
-    help="Name of API key - use a different name for each site.",
-)
-parser.add_argument("--loci", required=False, help="Comma-separated list of loci.")
-parser.add_argument(
-    "--quiet", required=False, help="Suppress output except for errors."
-)
-parser.add_argument(
-    "--schemes", required=False, help="Comma-separated list of scheme ids."
-)
-parser.add_argument(
-    "--token_dir",
-    required=False,
-    default="./.bigsdb_tokens",
-    help="Directory into which keys and tokens will be saved.",
-)
-
-
-args = parser.parse_args()
-
 
 def main():
-    global session_provider, access_provider, script
+    global session_provider, access_provider, script, args
+    args = parse_args()
     check_required_args()
     check_token_dir(args.token_dir)
 
