@@ -29,7 +29,8 @@ from urllib.parse import parse_qs
 from bigsdb.script import Script
 from rauth import OAuth1Service, OAuth1Session
 
-provider = None
+session_provider = None
+access_provider = None
 
 
 class TokenProvider:
@@ -173,7 +174,7 @@ args = parser.parse_args()
 
 
 def main():
-    global provider, script
+    global session_provider, access_provider, script
     check_required_args()
     check_token_dir(args.token_dir)
 
@@ -182,12 +183,14 @@ def main():
     except Exception as e:
         sys.exit(f"Error setting up script object for config {args.db}. {e}")
 
-    provider = TokenProvider(args.token_dir, args.key_name, token_type="session")
-    token, secret = provider.get()
+    session_provider = TokenProvider(
+        args.token_dir, args.key_name, token_type="session"
+    )
+    access_provider = TokenProvider(args.token_dir, args.key_name, token_type="access")
+    token, secret = session_provider.get()
     if not token or not secret:
-        # call get_new_session_token() directly to get initial token and provider will persist
         token, secret = get_new_session_token()
-        provider.set(token, secret)
+        session_provider.set(token, secret)
     db_type = check_db_types_match()
     if db_type == "seqdef":
         update_seqdef(token, secret)
@@ -261,21 +264,9 @@ def get_service():
     )
 
 
-def retrieve_token(token_type):
-    file_path = Path(f"{args.token_dir}/{token_type}_tokens")
-    if file_path.is_file():
-        config = configparser.ConfigParser(interpolation=None)
-        config.read(file_path)
-        if config.has_section(args.key_name):
-            token = config[args.key_name]["token"]
-            secret = config[args.key_name]["secret"]
-            return (token, secret)
-    return (None, None)
-
-
 def get_new_session_token():
-    file_path = Path(f"{args.token_dir}/session_tokens")
-    (access_token, access_secret) = retrieve_token("access")
+    global access_provider, session_provider
+    (access_token, access_secret) = access_provider.get()
     if not access_token or not access_secret:
         (access_token, access_secret) = get_new_access_token()
     service = get_service()
@@ -293,13 +284,7 @@ def get_new_session_token():
         response_json = get_response_content(r)
         token = response_json.get("oauth_token", "")
         secret = response_json.get("oauth_token_secret", "")
-        config = configparser.ConfigParser(interpolation=None)
-        if file_path.is_file():
-            config.read(file_path)
-        config[args.key_name] = {"token": token, "secret": secret}
-        with open(file_path, "w") as configfile:
-            config.write(configfile)
-
+        session_provider.set(token, secret)
         return (token, secret)
     else:
         try:
@@ -312,13 +297,8 @@ def get_new_session_token():
             sys.stderr.write("Run interactively to fix.\n")
         if re.search("verification", msg) or re.search("Invalid access token", msg):
             sys.stderr.write("New access token required - removing old one.\n")
-            config = configparser.ConfigParser(interpolation=None)
-            file_path = Path(f"{args.token_dir}/access_tokens")
-            if file_path.is_file():
-                config.read(file_path)
-                config.remove_section(args.key_name)
-                with open(file_path, "w") as configfile:
-                    config.write(configfile)
+            access_provider.set(None, None)
+
         sys.exit(1)
 
 
@@ -362,6 +342,7 @@ def get_new_request_token():
 
 
 def get_new_access_token():
+    global access_provider
     web_base_url = get_base_web()
     if args.cron:
         sys.stderr.write(f"No access token saved for {args.key_name}.\n")
@@ -387,19 +368,13 @@ def get_new_access_token():
         response_json = get_response_content(r)
         token = response_json.get("oauth_token", "")
         secret = response_json.get("oauth_token_secret", "")
-        file_path = Path(f"{args.token_dir}/access_tokens")
+        access_provider.set(token, secret)
         print("Access Token:        " + token)
         print("Access Token Secret: " + secret + "\n")
         print(
             "This access token will not expire but may be revoked by the \n"
             f"user or the service provider. It will be saved to \n{file_path}."
         )
-        config = configparser.ConfigParser(interpolation=None)
-        if file_path.is_file():
-            config.read(file_path)
-        config[args.key_name] = {"token": token, "secret": secret}
-        with open(file_path, "w") as configfile:
-            config.write(configfile)
         return (token, secret)
     else:
         try:
@@ -437,6 +412,7 @@ def get_client_credentials():
         config[args.key_name] = {"client_id": client_id, "client_secret": client_secret}
         with open(file_path, "w") as configfile:
             config.write(configfile)
+        os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
     return client_id, client_secret
 
 
@@ -535,7 +511,7 @@ def trim_url_args(url):
 
 
 def check_db_types_match():
-    response = get_route(args.api_db_url, provider)
+    response = get_route(args.api_db_url, session_provider)
     if "isolates" in response:
         remote = "isolates"
     elif "sequences" in response:
@@ -555,13 +531,13 @@ def get_remote_locus_list(schemes: [int] = None):
     if schemes:
         for scheme_id in schemes:
             scheme_loci = get_route(
-                f"{args.api_db_url}/schemes/{scheme_id}/loci", provider
+                f"{args.api_db_url}/schemes/{scheme_id}/loci", session_provider
             )
             if scheme_loci["loci"]:
                 locus_urls.extend(scheme_loci["loci"])
         locus_urls = list(dict.fromkeys(locus_urls))
     else:
-        loci = get_route(f"{args.api_db_url}/loci?return_all=1", provider)
+        loci = get_route(f"{args.api_db_url}/loci?return_all=1", session_provider)
         if loci["loci"]:
             locus_urls.extend(loci["loci"])
     return locus_urls
