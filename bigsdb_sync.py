@@ -22,10 +22,101 @@ import stat
 import re
 import configparser
 import json
+import threading
+import time
 from pathlib import Path
 from urllib.parse import parse_qs
 from bigsdb.script import Script
 from rauth import OAuth1Service, OAuth1Session
+
+provider = None
+
+
+class TokenProvider:
+    """
+    In-memory provider backed by the on-disk token files used by your script.
+    Single-process safe: uses threading locks to avoid concurrent refreshes in threads.
+    If you run multiple processes you should replace the refresh lock with a file lock
+    or use a central store (Redis/DB) + distributed lock.
+    """
+
+    def __init__(self, token_dir, key_name, token_type="session"):
+        self.token_dir = Path(token_dir)
+        self.key_name = key_name
+        self.token_type = token_type  # "session" by default
+        self._lock = threading.RLock()  # protects _token/_secret reads/writes
+        self._refresh_lock = threading.Lock()  # single-flight refresh
+        self._token = None
+        self._secret = None
+        # lazy load
+        self._load_from_disk()
+
+    def _token_file(self):
+        return self.token_dir / f"{self.token_type}_tokens"
+
+    def _load_from_disk(self):
+        file_path = self._token_file()
+        if not file_path.is_file():
+            self._token = None
+            self._secret = None
+            return
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(file_path)
+        if config.has_section(self.key_name):
+            self._token = config[self.key_name].get("token")
+            self._secret = config[self.key_name].get("secret")
+        else:
+            self._token = None
+            self._secret = None
+
+    def _write_to_disk(self, token, secret):
+        file_path = self._token_file()
+        config = configparser.ConfigParser(interpolation=None)
+        if file_path.is_file():
+            config.read(file_path)
+        config[self.key_name] = {"token": token, "secret": secret}
+        with open(file_path, "w") as fh:
+            config.write(fh)
+
+    def get(self):
+        with self._lock:
+            # ensure we have the latest from disk (in case another process updated it)
+            self._load_from_disk()
+            return self._token, self._secret
+
+    def set(self, token, secret):
+        with self._lock:
+            self._token = token
+            self._secret = secret
+            # persist immediately
+            self._write_to_disk(token, secret)
+
+    def refresh(self, refresh_func):
+        """
+        Single-flight refresh. refresh_func is a callable that returns (token, secret).
+        If another thread is already refreshing we will wait and re-read the token.
+        """
+        # try to acquire refresh lock: if we get it, we'll do the refresh; otherwise wait.
+        if self._refresh_lock.acquire(blocking=False):
+            try:
+                # call refresh_func which must not call get_route() (to avoid recursion)
+                token, secret = refresh_func()
+                if not token or not secret:
+                    raise RuntimeError("Refresh function returned invalid credentials")
+                # store & persist
+                self.set(token, secret)
+                return token, secret
+            finally:
+                self._refresh_lock.release()
+        else:
+            # someone else is refreshing — wait a short while for it to finish
+            waited = 0.0
+            while self._refresh_lock.locked() and waited < 10.0:
+                time.sleep(0.05)
+                waited += 0.05
+            # then return latest
+            return self.get()
+
 
 USER_AGENT = "BIGSdb_sync"
 BASE_WEB = {
@@ -85,13 +176,17 @@ except Exception as e:
 
 
 def main():
+    global provider
     check_required_args()
     check_token_dir(args.token_dir)
 
-    (token, secret) = retrieve_token("session")
+    provider = TokenProvider(args.token_dir, args.key_name, token_type="session")
+    token, secret = provider.get()
     if not token or not secret:
-        (token, secret) = get_new_session_token()
-    db_type = check_db_types_match(token, secret)
+        # call get_new_session_token() directly to get initial token and provider will persist
+        token, secret = get_new_session_token()
+        provider.set(token, secret)
+    db_type = check_db_types_match()
     if db_type == "seqdef":
         update_seqdef(token, secret)
 
@@ -316,15 +411,16 @@ def get_client_credentials():
 
 def get_route(
     url,
-    token,
-    secret,
+    token_provider,
     method="GET",
-    json_body={},
+    json_body=None,
 ):
-    print(url)
+    if json_body is None:
+        json_body = {}
     (client_key, client_secret) = get_client_credentials()
     attempts = 0
     while True:
+        token, secret = token_provider.get()
         session = OAuth1Session(
             client_key, client_secret, access_token=token, access_token_secret=secret
         )
@@ -349,8 +445,7 @@ def get_route(
                 header_auth=True,
             )
 
-        if r.status_code == 200 or r.status_code == 201:
-
+        if r.status_code in (200, 201):
             if re.search("json", r.headers["content-type"], flags=0):
                 return r.json()
             else:
@@ -375,9 +470,7 @@ def get_route(
                     sys.exit(1)
                 sys.stderr.write(r.json()["message"] + "\n")
                 sys.stderr.write("Invalid session token, requesting new one...\n")
-                print(f"Old token: {token}; secret: {secret}")
-                token, secret = get_new_session_token()
-                print(f"New token: {token}; secret: {secret}")
+                token_provider.refresh(get_new_session_token)
                 continue
         else:
             sys.stderr.write(f"Error from API: {r.text}\n")
@@ -400,8 +493,8 @@ def trim_url_args(url):
     return trimmed_url, processed_params
 
 
-def check_db_types_match(token, secret):
-    response = get_route(args.api_db_url, token, secret)
+def check_db_types_match():
+    response = get_route(args.api_db_url, provider)
     if "isolates" in response:
         remote = "isolates"
     elif "sequences" in response:
@@ -416,18 +509,18 @@ def check_db_types_match(token, secret):
     return local
 
 
-def get_remote_locus_list(token, secret, schemes: [int] = None):
+def get_remote_locus_list(schemes: [int] = None):
     locus_urls = []
     if schemes:
         for scheme_id in schemes:
             scheme_loci = get_route(
-                f"{args.api_db_url}/schemes/{scheme_id}/loci", token, secret
+                f"{args.api_db_url}/schemes/{scheme_id}/loci", provider
             )
             if scheme_loci["loci"]:
                 locus_urls.extend(scheme_loci["loci"])
         locus_urls = list(dict.fromkeys(locus_urls))
     else:
-        loci = get_route(f"{args.api_db_url}/loci?return_all=1", token, secret)
+        loci = get_route(f"{args.api_db_url}/loci?return_all=1", provider)
         if loci["loci"]:
             locus_urls.extend(loci["loci"])
     return locus_urls
@@ -448,7 +541,7 @@ def get_local_locus_list(schemes: [int] = None):
 
 def update_seqdef(token, secret):
     selected_schemes = get_selected_scheme_list()
-    remote_locus_urls = get_remote_locus_list(token, secret, selected_schemes)
+    remote_locus_urls = get_remote_locus_list(selected_schemes)
     remote_loci = extract_locus_names_from_urls(remote_locus_urls)
     local_loci = get_local_locus_list(selected_schemes)
     remote_count = len(remote_loci)
