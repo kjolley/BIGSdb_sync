@@ -24,6 +24,7 @@ import configparser
 import json
 import threading
 import time
+import logging
 from pathlib import Path
 from urllib.parse import parse_qs
 from bigsdb.script import Script
@@ -44,18 +45,21 @@ def parse_args():
     parser.add_argument(
         "--api_db_url",
         required=True,
-        help="URL for the top-level database API call, e.g. https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef",
+        help="URL for the top-level database API call, e.g. "
+        "https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef",
     )
     parser.add_argument(
         "--base_web_url",
         required=False,
-        help="URL to BIGSdb script on target web site. This is only needed to set up the access token.\n"
+        help="URL to BIGSdb script on target web site. "
+        "This is only needed to set up the access token.\n"
         "It should not be necessary to set this for PubMLST or BIGSdb Pasteur.",
     )
     parser.add_argument(
         "--cron",
         action="store_true",
-        help="Script is being run as a CRON job or non-interactively.",
+        help="Script is being run as a CRON job or non-interactively. "
+        "Output will be sent to a log file (defined by --log_file).",
     )
     parser.add_argument("--db", required=True, help="Local database config name.")
     parser.add_argument(
@@ -65,7 +69,16 @@ def parse_args():
     )
     parser.add_argument("--loci", required=False, help="Comma-separated list of loci.")
     parser.add_argument(
-        "--quiet", required=False, help="Suppress output except for errors."
+        "--log_file",
+        required=False,
+        default="/var/log/bigsdb_sync.log",
+        help="Path to log file if run with --cron option. Default is /var/log/bigsdb_sync.log.",
+    )
+    parser.add_argument(
+        "--log_level",
+        required=False,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Log level. Default to ERROR when run with --cron, or INFO when run interactively.",
     )
     parser.add_argument(
         "--schemes", required=False, help="Comma-separated list of scheme ids."
@@ -81,7 +94,7 @@ def parse_args():
 
 class TokenProvider:
     """
-    In-memory provider backed by the on-disk token files used by your script.
+    In-memory provider backed by the on-disk token files used by script.
     Single-process safe: uses threading locks to avoid concurrent refreshes in threads.
     If you run multiple processes you should replace the refresh lock with a file lock
     or use a central store (Redis/DB) + distributed lock.
@@ -179,11 +192,13 @@ def main():
     args = parse_args()
     check_required_args()
     check_token_dir(args.token_dir)
+    logger = init_logger()
 
     try:
-        script = Script(database=args.db)
+        script = Script(database=args.db, logger=logger)
     except Exception as e:
-        sys.exit(f"Error setting up script object for config {args.db}. {e}")
+        script.logger.error(f"Error setting up script object for config {args.db}. {e}")
+        sys.exit(1)
 
     session_provider = TokenProvider(
         args.token_dir, args.key_name, token_type="session"
@@ -198,12 +213,68 @@ def main():
         update_seqdef(token, secret)
 
 
+def init_logger():
+    logger = logging.getLogger(__name__)
+    if args.log_level is None:
+        if args.cron:
+            args.log_level = "ERROR"
+        else:
+            args.log_level = "INFO"
+    level = logging.getLevelName(args.log_level)
+    formats = {
+        "cron_debug": "%(asctime)s - %(levelname)s: - %(module)s:%(lineno)d - %(message)s",
+        "cron": "%(asctime)s - %(levelname)s: - %(message)s",
+        "interactive_debug": "%(levelname)s: - %(module)s:%(lineno)d - %(message)s",
+        "interactive": "%(levelname)s: %(message)s",
+    }
+
+    if args.cron:
+        log_path = Path(args.log_file)
+        if log_path.exists():
+            # Check if it's writable
+            if not os.access(log_path, os.W_OK):
+                script.logger.critical(
+                    f"Log file {args.log_file} exists but is not writable.\n"
+                )
+                sys.exit(1)
+        else:
+            # Create a new empty log file
+            try:
+                log_path.touch(mode=0o644, exist_ok=False)
+            except Exception as e:
+                script.logger.critical(f"Failed to create log file: {e}")
+                sys.exit(1)
+        f_handler = logging.FileHandler(args.log_file)
+        f_handler.setLevel(level)
+        format = (
+            formats.get("cron_debug")
+            if args.log_level == "DEBUG"
+            else formats.get("cron")
+        )
+        f_format = logging.Formatter(format)
+        f_handler.setFormatter(f_format)
+        logger.addHandler(f_handler)
+    else:
+        c_handler = logging.StreamHandler()
+        c_handler.setLevel(level)
+        format = (
+            formats.get("interactive_debug")
+            if args.log_level == "DEBUG"
+            else formats.get("interactive")
+        )
+        c_format = logging.Formatter(format)
+        c_handler.setFormatter(c_format)
+        logger.addHandler(c_handler)
+    return logger
+
+
 def check_required_args():
     if not re.search(r"^https?://.*/db/[A-Za-z0-9_-]+$", args.api_db_url):
-        sys.exit(
+        script.logger.error(
             "--api_db_url should be a valid URL (starting with http(s):// and\n"
             "ending with /db/xxx where xxx is a database configuration)."
         )
+        sys.exit(1)
 
 
 def get_base_web():
@@ -213,7 +284,8 @@ def get_base_web():
         return BASE_WEB["PubMLST"]
     if re.search(r"bigsdb.pasteur.fr", args.api_db_url):
         return BASE_WEB["Pasteur"]
-    sys.exit("Base web URL not determined. Please set with --base_web_url.")
+    script.logger.error("Base web URL not determined. Please set with --base_web_url.")
+    sys.exit(1)
 
 
 def get_db_type():
@@ -222,9 +294,11 @@ def get_db_type():
             "SELECT value FROM db_attributes WHERE field=?", "type"
         )
     except ValueError as e:
-        sys.exit("Could not determine local database type.")
+        script.logger.error("Could not determine local database type.")
+        sys.exit(1)
     if db_type not in ("seqdef", "isolates"):
-        sys.exit("Invalid db_type for local database.")
+        script.logger.error("Invalid db_type for local database.")
+        sys.exit(1)
     return db_type
 
 
@@ -242,13 +316,19 @@ def check_token_dir(directory):
         if os.access(directory, os.W_OK):
             return
         else:
-            sys.exit(f"The token directory '{directory}' exists but is not writable.")
+            script.logger.critical(
+                f"The token directory '{directory}' exists but is not writable."
+            )
+            sys.exit(1)
     else:
         try:
             os.makedirs(directory)
             os.chmod(directory, stat.S_IRWXU)  # Set permissions to 0700
         except OSError as e:
-            sys.exit(f"Failed to create token directory '{directory}': {e}")
+            script.logger.critical(
+                f"Failed to create token directory '{directory}': {e}"
+            )
+            sys.exit(1)
 
 
 def get_service():
@@ -294,11 +374,11 @@ def get_new_session_token():
         except ValueError:
             payload = {}
         msg = payload.get("message", "") if isinstance(payload, dict) else ""
-        sys.stderr.write(f"Failed to get new session token. {msg}\n")
+        script.logger.error(f"Failed to get new session token. {msg}\n")
         if args.cron:
-            sys.stderr.write("Run interactively to fix.\n")
+            script.logger.error("Run interactively to fix.\n")
         if re.search("verification", msg) or re.search("Invalid access token", msg):
-            sys.stderr.write("New access token required - removing old one.\n")
+            script.logger.error("New access token required - removing old one.\n")
             access_provider.set(None, None)
 
         sys.exit(1)
@@ -310,7 +390,7 @@ def get_response_content(r):
         try:
             return r.json()
         except ValueError:
-            sys.stderr.write("Response declared JSON but could not parse JSON.\n")
+            script.logger.error("Response declared JSON but could not parse JSON.\n")
             sys.exit(1)
     # fallback: try JSON anyway then fallback to text
     try:
@@ -328,7 +408,8 @@ def get_new_request_token():
         params={"oauth_callback": "oob"}, headers={"User-Agent": USER_AGENT}
     )
     if r.status_code == 404:
-        sys.exit(f"404 Page not found. {args.api_db_url}.")
+        script.logger.error(f"404 Page not found. {args.api_db_url}.")
+        sys.exit(1)
     if r.status_code == 200:
         response_json = get_response_content(r)
         token = response_json.get("oauth_token", "")
@@ -340,15 +421,18 @@ def get_new_request_token():
         except ValueError:
             payload = {}
         msg = payload.get("message", "") if isinstance(payload, dict) else ""
-        sys.exit(f"Failed to get new request token. {msg}")
+        script.logger.error(f"Failed to get new request token. {msg}")
+        exit(1)
 
 
 def get_new_access_token():
     global access_provider
     web_base_url = get_base_web()
     if args.cron:
-        sys.stderr.write(f"No access token saved for {args.key_name}.\n")
-        sys.stderr.write("Run interactively to set (without --cron).\n")
+        script.logger.error(
+            f"No access token saved for {args.key_name}. "
+            "Run interactively to set (without --cron)."
+        )
         sys.exit(1)
     file_path = Path(f"{args.token_dir}/access_tokens")
     (request_token, request_secret) = get_new_request_token()
@@ -384,7 +468,7 @@ def get_new_access_token():
         except ValueError:
             payload = {}
         msg = payload.get("message", "") if isinstance(payload, dict) else ""
-        sys.stderr.write(f"Failed to get new access token. {msg}")
+        script.logger.error(f"Failed to get new access token. {msg}")
         sys.exit(1)
 
 
@@ -399,8 +483,9 @@ def get_client_credentials():
             client_secret = config[args.key_name]["client_secret"]
     if not client_id:
         if args.cron:
-            sys.stderr.write(f"No client credentials saved for {args.key_name}.\n")
-            sys.stderr.write("Run interactively to set.\n")
+            script.logger.error(
+                f"No client credentials saved for {args.key_name}. Run interactively to set."
+            )
             sys.exit(1)
         client_id = input("Enter client id: ").strip()
         while len(client_id) != 24:
@@ -442,7 +527,8 @@ def get_route(
             )
         else:
             if not is_valid_json(json_body):
-                parser.error("Body does not contain valid JSON")
+                script.logger.error("Body does not contain valid JSON")
+                exit(1)
             r = session.post(
                 trimmed_url,
                 params=request_params,
@@ -462,7 +548,7 @@ def get_route(
             except ValueError:
                 payload = {}
             msg = payload.get("message", "") if isinstance(payload, dict) else ""
-            sys.stderr.write(f"Bad request - {msg}")
+            script.logger.error(f"Bad request - {msg}")
             sys.exit(1)
         elif r.status_code == 401:
             try:
@@ -470,21 +556,22 @@ def get_route(
             except Exception:
                 msg = r.text or ""
             if "unauthorized" in msg.lower():
-                sys.stderr.write("Access denied - client is unauthorized\n")
+                script.logger.error("Access denied - client is unauthorized\n")
                 sys.exit(1)
             else:
                 attempts += 1
                 if attempts > MAX_REFRESH_ATTEMPTS:
-                    sys.stderr.write(
+                    script.logger.error(
                         "Invalid session token and refresh attempts exhausted.\n"
                     )
                     sys.exit(1)
-                sys.stderr.write(f"{msg}\n")
-                sys.stderr.write("Invalid session token, requesting new one...\n")
+
+                script.logger.info(f"{msg}\n")
+                script.logger.info("Invalid session token, requesting new one...\n")
                 token_provider.refresh(get_new_session_token)
                 continue
         else:
-            sys.stderr.write(f"Error from API: {r.text}\n")
+            script.logger.error(f"Error from API: {r.text}")
             sys.exit(1)
 
 
@@ -519,12 +606,14 @@ def check_db_types_match():
     elif "sequences" in response:
         remote = "seqdef"
     else:
-        sys.exit("Cannot determine remote database type.")
+        script.logger.error("Cannot determine remote database type.")
+        sys.exit(1)
     local = get_db_type()
     if remote != local:
-        sys.exit(
+        script.logger.error(
             f"Remote db type: {remote}; Local db type: {local}. DATABASE MISMATCH!"
         )
+        sys.exit(1)
     return local
 
 
@@ -566,7 +655,7 @@ def update_seqdef(token, secret):
     remote_count = len(remote_loci)
     local_count = len(local_loci)
     if remote_count != local_count:
-        print(f"Remote loci: {remote_count}; Local loci: {local_count}")
+        script.logger.warning(f"Remote loci: {remote_count}; Local loci: {local_count}")
 
 
 def extract_locus_names_from_urls(urls):
@@ -580,7 +669,10 @@ def get_selected_scheme_list():
                 {int(scheme_id.strip()) for scheme_id in args.schemes.split(",")}
             )
         except ValueError as e:
-            sys.exit("Error: invalid non-integer value found in --schemes argument.")
+            script.logger.error(
+                "Invalid non-integer value found in --schemes argument."
+            )
+            exit(1)
         return scheme_list
 
 
