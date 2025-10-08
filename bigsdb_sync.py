@@ -197,8 +197,7 @@ def main():
     try:
         script = Script(database=args.db, logger=logger)
     except Exception as e:
-        script.logger.error(f"Error setting up script object for config {args.db}. {e}")
-        sys.exit(1)
+        sys.exit(f"Error setting up script object for config {args.db}. {e}")
 
     session_provider = TokenProvider(
         args.token_dir, args.key_name, token_type="session"
@@ -221,6 +220,8 @@ def init_logger():
         else:
             args.log_level = "INFO"
     level = logging.getLevelName(args.log_level)
+    logger.setLevel(level)
+    logger.propagate = False
     formats = {
         "cron_debug": "%(asctime)s - %(levelname)s: - %(module)s:%(lineno)d - %(message)s",
         "cron": "%(asctime)s - %(levelname)s: - %(message)s",
@@ -233,17 +234,17 @@ def init_logger():
         if log_path.exists():
             # Check if it's writable
             if not os.access(log_path, os.W_OK):
-                script.logger.critical(
-                    f"Log file {args.log_file} exists but is not writable.\n"
+                sys.stderr.write(
+                    f"CRITICAL: Log file {args.log_file} exists but is not writable.\n"
                 )
-                sys.exit(1)
+                exit(1)
         else:
             # Create a new empty log file
             try:
                 log_path.touch(mode=0o644, exist_ok=False)
             except Exception as e:
-                script.logger.critical(f"Failed to create log file: {e}")
-                sys.exit(1)
+                sys.stderr.write(f"CRITICAL: Failed to create log file: {e}.\n")
+                exit(1)
         f_handler = logging.FileHandler(args.log_file)
         f_handler.setLevel(level)
         format = (
@@ -655,7 +656,12 @@ def update_seqdef(token, secret):
     remote_count = len(remote_loci)
     local_count = len(local_loci)
     if remote_count != local_count:
-        script.logger.warning(f"Remote loci: {remote_count}; Local loci: {local_count}")
+        script.logger.info(f"Remote loci: {remote_count}; Local loci: {local_count}")
+        not_in_local = [x for x in remote_loci if x not in local_loci]
+        if len(not_in_local):
+            script.logger.info(f"Not defined in local: {not_in_local}")
+            if not args.add_new_loci:
+                script.logger.info("Run with --add_new_loci to define these locally.")
 
 
 def extract_locus_names_from_urls(urls):
