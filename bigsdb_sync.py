@@ -185,6 +185,7 @@ BASE_WEB = {
     "Pasteur": "https://bigsdb.pasteur.fr/cgi-bin/bigsdb/bigsdb.pl",
 }
 MAX_REFRESH_ATTEMPTS = 1
+MAX_ROUTE_ATTEMPTS = 10
 
 
 def main():
@@ -513,7 +514,9 @@ def get_route(
     if json_body is None:
         json_body = {}
     (client_key, client_secret) = get_client_credentials()
-    attempts = 0
+    refresh_attempts = 0
+    route_attempts = 0
+    route_fail_delay = 5
     while True:
         token, secret = token_provider.get()
         session = OAuth1Session(
@@ -529,7 +532,7 @@ def get_route(
         else:
             if not is_valid_json(json_body):
                 script.logger.error("Body does not contain valid JSON")
-                exit(1)
+                sys.exit(1)
             r = session.post(
                 trimmed_url,
                 params=request_params,
@@ -543,6 +546,20 @@ def get_route(
 
         if r.status_code in (200, 201):
             return get_response_content(r)
+        elif r.status_code in (502, 503, 504):
+            route_attempts += 1
+            if route_attempts > MAX_ROUTE_ATTEMPTS:
+                script.logger.error(
+                    f"Attempt to connect to {url} failed {route_attempts} times. Terminating\n"
+                )
+                sys.exit(1)
+            script.logger.warning(
+                f"Network error when called {url}: {r.status_code} "
+                f"(attempt {route_attemps}/{MAX_ROUTE_ATTEMPTS})"
+            )
+            time.sleep(route_fail_delay)
+            route_fail_delay += 5
+            continue
         elif r.status_code == 400:
             try:
                 payload = r.json()
@@ -560,8 +577,8 @@ def get_route(
                 script.logger.error("Access denied - client is unauthorized\n")
                 sys.exit(1)
             else:
-                attempts += 1
-                if attempts > MAX_REFRESH_ATTEMPTS:
+                refresh_attempts += 1
+                if refresh_attempts > MAX_REFRESH_ATTEMPTS:
                     script.logger.error(
                         "Invalid session token and refresh attempts exhausted.\n"
                     )
@@ -660,7 +677,9 @@ def update_seqdef(token, secret):
         not_in_local = [x for x in remote_loci if x not in local_loci]
         if len(not_in_local):
             script.logger.info(f"Not defined in local: {not_in_local}")
-            if not args.add_new_loci:
+            if args.add_new_loci:
+                add_new_loci(not_in_local)
+            else:
                 script.logger.info("Run with --add_new_loci to define these locally.")
 
 
@@ -680,6 +699,12 @@ def get_selected_scheme_list():
             )
             exit(1)
         return scheme_list
+
+
+def add_new_loci(loci):
+    for locus in loci:
+        url = f"{args.api_db_url}/loci/{locus}"
+        print(url)
 
 
 if __name__ == "__main__":
