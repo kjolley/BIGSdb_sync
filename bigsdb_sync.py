@@ -380,11 +380,11 @@ def get_new_session_token():
         except ValueError:
             payload = {}
         msg = payload.get("message", "") if isinstance(payload, dict) else ""
-        script.logger.error(f"Failed to get new session token. {msg}\n")
+        script.logger.error(f"Failed to get new session token. {msg}")
         if args.cron:
-            script.logger.error("Run interactively to fix.\n")
+            script.logger.error("Run interactively to fix.")
         if re.search("verification", msg) or re.search("Invalid access token", msg):
-            script.logger.error("New access token required - removing old one.\n")
+            script.logger.error("New access token required - removing old one.")
             access_provider.set(None, None)
 
         sys.exit(1)
@@ -396,7 +396,7 @@ def get_response_content(r):
         try:
             return r.json()
         except ValueError:
-            script.logger.error("Response declared JSON but could not parse JSON.\n")
+            script.logger.error("Response declared JSON but could not parse JSON.")
             sys.exit(1)
     # fallback: try JSON anyway then fallback to text
     try:
@@ -567,7 +567,7 @@ def get_route(
             connection_attempts += 1
             if connection_attempts > MAX_CONNECTION_ATTEMPTS:
                 script.logger.error(
-                    f"Network connection failed {connection_attempts} times. Terminating"
+                    f"Network connection failed {connection_attempts} times. Terminating."
                 )
                 sys.exit(1)
             script.logger.debug(f"Network error connecting to {url}: {exc}")
@@ -582,7 +582,7 @@ def get_route(
             route_attempts += 1
             if route_attempts > MAX_ROUTE_ATTEMPTS:
                 script.logger.error(
-                    f"Attempt to connect to {url} failed {route_attempts} times. Terminating\n"
+                    f"Attempt to connect to {url} failed {route_attempts} times. Terminating."
                 )
                 sys.exit(1)
             script.logger.warning(
@@ -606,18 +606,18 @@ def get_route(
             except Exception:
                 msg = r.text or ""
             if "unauthorized" in msg.lower():
-                script.logger.error("Access denied - client is unauthorized\n")
+                script.logger.error("Access denied - client is unauthorized.")
                 sys.exit(1)
             else:
                 refresh_attempts += 1
                 if refresh_attempts > MAX_REFRESH_ATTEMPTS:
                     script.logger.error(
-                        "Invalid session token and refresh attempts exhausted.\n"
+                        "Invalid session token and refresh attempts exhausted."
                     )
                     sys.exit(1)
 
                 script.logger.info(f"{msg}\n")
-                script.logger.info("Invalid session token, requesting new one...\n")
+                script.logger.info("Invalid session token, requesting new one...")
                 token_provider.refresh(get_new_session_token)
                 continue
         else:
