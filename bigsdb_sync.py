@@ -14,7 +14,7 @@
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# Version 20251003
+# Version 20251011
 import argparse
 import sys
 import os
@@ -29,6 +29,19 @@ from pathlib import Path
 from urllib.parse import parse_qs
 from bigsdb.script import Script
 from rauth import OAuth1Service, OAuth1Session
+from requests.exceptions import Timeout, ConnectionError, RequestException
+
+USER_AGENT = "BIGSdb_sync"
+BASE_WEB = {
+    "PubMLST": "https://pubmlst.org/bigsdb",
+    "Pasteur": "https://bigsdb.pasteur.fr/cgi-bin/bigsdb/bigsdb.pl",
+}
+MAX_REFRESH_ATTEMPTS = 1
+MAX_ROUTE_ATTEMPTS = 10
+CONNECT_TIMEOUT = 10
+READ_TIMEOUT = 60
+CONNECTION_FAIL_RETRY = 60
+MAX_CONNECTION_ATTEMPTS = 10
 
 session_provider = None
 access_provider = None
@@ -177,15 +190,6 @@ class TokenProvider:
                 waited += 0.05
             # then return latest
             return self.get()
-
-
-USER_AGENT = "BIGSdb_sync"
-BASE_WEB = {
-    "PubMLST": "https://pubmlst.org/bigsdb",
-    "Pasteur": "https://bigsdb.pasteur.fr/cgi-bin/bigsdb/bigsdb.pl",
-}
-MAX_REFRESH_ATTEMPTS = 1
-MAX_ROUTE_ATTEMPTS = 10
 
 
 def main():
@@ -515,6 +519,7 @@ def get_route(
         json_body = {}
     (client_key, client_secret) = get_client_credentials()
     refresh_attempts = 0
+    connection_attempts = 0
     route_attempts = 0
     route_fail_delay = 5
     while True:
@@ -523,27 +528,54 @@ def get_route(
             client_key, client_secret, access_token=token, access_token_secret=secret
         )
         trimmed_url, request_params = trim_url_args(url)
-        if method == "GET":
-            r = session.get(
-                trimmed_url,
-                params=request_params,
-                headers={"User-Agent": USER_AGENT},
-            )
-        else:
-            if not is_valid_json(json_body):
-                script.logger.error("Body does not contain valid JSON")
+        try:
+            if method == "GET":
+                r = session.get(
+                    trimmed_url,
+                    params=request_params,
+                    headers={"User-Agent": USER_AGENT},
+                    timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+                )
+            else:
+                if not is_valid_json(json_body):
+                    script.logger.error("Body does not contain valid JSON")
+                    sys.exit(1)
+                r = session.post(
+                    trimmed_url,
+                    params=request_params,
+                    data=json_body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "User-Agent": USER_AGENT,
+                    },
+                    header_auth=True,
+                    timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+                )
+        except Timeout as exc:
+            script.logger.debug(exc)
+            script.logger.warning(f"Request to {url} timed out.")
+            route_attempts += 1
+            if route_attempts >= MAX_ROUTE_ATTEMPTS:
+                script.logger.error(
+                    f"Timeouts exceeded for {url} after {route_attempts} attempts. Terminating."
+                )
                 sys.exit(1)
-            r = session.post(
-                trimmed_url,
-                params=request_params,
-                data=json_body,
-                headers={
-                    "Content-Type": "application/json",
-                    "User-Agent": USER_AGENT,
-                },
-                header_auth=True,
+            time.sleep(route_fail_delay)
+            route_fail_delay += 5
+            continue
+        except ConnectionError as exc:
+            connection_attempts += 1
+            if connection_attempts > MAX_CONNECTION_ATTEMPTS:
+                script.logger.error(
+                    f"Network connection failed {connection_attempts} times. Terminating"
+                )
+                sys.exit(1)
+            script.logger.debug(f"Network error connecting to {url}: {exc}")
+            script.logger.error(
+                f"Network connection error. Retrying in {CONNECTION_FAIL_RETRY} seconds."
             )
-
+            time.sleep(CONNECTION_FAIL_RETRY)
+            continue
         if r.status_code in (200, 201):
             return get_response_content(r)
         elif r.status_code in (502, 503, 504):
@@ -555,7 +587,7 @@ def get_route(
                 sys.exit(1)
             script.logger.warning(
                 f"Network error when called {url}: {r.status_code} "
-                f"(attempt {route_attemps}/{MAX_ROUTE_ATTEMPTS})"
+                f"(attempt {route_attempts}/{MAX_ROUTE_ATTEMPTS})"
             )
             time.sleep(route_fail_delay)
             route_fail_delay += 5
