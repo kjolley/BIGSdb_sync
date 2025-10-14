@@ -25,6 +25,8 @@ import json
 import threading
 import time
 import logging
+import psycopg2
+
 from pathlib import Path
 from urllib.parse import parse_qs
 from bigsdb.script import Script
@@ -701,7 +703,7 @@ def update_seqdef(token, secret):
     selected_schemes = get_selected_scheme_list()
     remote_locus_urls = get_remote_locus_list(selected_schemes)
     remote_loci = extract_locus_names_from_urls(remote_locus_urls)
-    local_loci = get_local_locus_list(selected_schemes)
+    local_loci = get_local_locus_list()
     remote_count = len(remote_loci)
     local_count = len(local_loci)
     if remote_count != local_count:
@@ -736,7 +738,118 @@ def get_selected_scheme_list():
 def add_new_loci(loci):
     for locus in loci:
         url = f"{args.api_db_url}/loci/{locus}"
-        print(url)
+        locus_info = get_route(url, session_provider)
+        possible_fields = [
+            "id",
+            "data_type",
+            "allele_id_format",
+            "coding_sequence",
+            "formatted_name",
+            "common_name",
+            "formatted_common_name",
+            "locus_type",
+            "allele_id_regex",
+            "length",
+            "length_varies",
+            "min_length",
+            "max_length",
+            "complete_cds",
+            "start_codons",
+            "orf",
+            "genome_position",
+            "match_longest",
+            "id_check_type_alleles",
+            "id_check_threshold",
+        ]
+        fields = []
+        placeholders = []
+        values = []
+        for field in possible_fields:
+            if locus_info.get(field) == None:
+                continue
+            fields.append(field)
+            values.append(locus_info.get(field))
+            placeholders.append("%s")
+        fields.extend(["curator", "date_entered", "datestamp"])
+        placeholders.extend(["%s", "%s", "%s"])
+        values.extend([0, "now", "now"])
+        inserts = []
+        qry = (
+            "INSERT INTO loci ("
+            + ",".join(fields)
+            + ") VALUES ("
+            + ",".join(placeholders)
+            + ")"
+        )
+        inserts.append({"qry": qry, "values": values})
+
+        db = script.db
+        cursor = db.cursor()
+        if locus_info.get("aliases"):
+            aliases = locus_info.get("aliases")
+            for alias in aliases:
+                inserts.append(
+                    {
+                        "qry": "INSERT INTO locus_aliases (locus,alias,curator,datestamp) VALUES (%s,%s,%s,%s)",
+                        "values": [locus, alias, 0, "now"],
+                    }
+                )
+        db_type = get_db_type()
+        if db_type == "seqdef":
+            if set(["full_name", "product", "description"]) & locus_info.keys():
+                inserts.append(
+                    {
+                        "qry": "INSERT INTO locus_descriptions(locus,full_name,product,description,datestamp,curator) VALUES (%s,%s,%s,%s,%s,%s)",
+                        "values": [
+                            locus,
+                            locus_info.get("full_name"),
+                            locus_info.get("product"),
+                            locus_info.get("description"),
+                            "now",
+                            0,
+                        ],
+                    }
+                )
+            if locus_info.get("extended_attributes"):
+                attributes = locus_info.get("extended_attributes")
+                for attribute in attributes:
+                    option_list = None
+                    if attribute.get("allowed_values"):
+                        option_list = "|".join(attribute.get("allowed_values"))
+                    inserts.append(
+                        {
+                            "qry": "INSERT INTO locus_extended_attributes "
+                            "(locus,field,value_format,length,value_regex,description,option_list,"
+                            "required,field_order,main_display,datestamp,curator) VALUES "
+                            "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            "values": [
+                                locus,
+                                attribute.get("field"),
+                                attribute.get("value_format"),
+                                attribute.get("length"),
+                                attribute.get("value_regex"),
+                                attribute.get("description"),
+                                option_list,
+                                attribute.get("required"),
+                                attribute.get("field_order"),
+                                True,
+                                "now",
+                                0,
+                            ],
+                        }
+                    )
+        try:
+            for insert in inserts:
+                cursor.execute(insert.get("qry"), insert.get("values", []))
+            db.commit()
+            script.logger.info(f"Locus {locus} added.")
+        except Exception as e:
+            db.rollback()
+            if "already exists" in str(e):
+                script.logger.warning(f"Locus {locus} already exists. Skipped.")
+                continue
+            script.logger.error(f"INSERT failed - {e}")
+            exit(1)
 
 
 if __name__ == "__main__":
