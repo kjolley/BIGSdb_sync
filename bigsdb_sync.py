@@ -24,6 +24,7 @@ import configparser
 import json
 import threading
 import time
+import random
 import logging
 import psycopg2
 
@@ -44,6 +45,7 @@ CONNECT_TIMEOUT = 10
 READ_TIMEOUT = 60
 CONNECTION_FAIL_RETRY = 60
 MAX_CONNECTION_ATTEMPTS = 10
+TOO_MANY_REQUESTS_DELAY = 60
 
 session_provider = None
 access_provider = None
@@ -622,6 +624,15 @@ def get_route(
                 script.logger.info("Invalid session token, requesting new one...")
                 token_provider.refresh(get_new_session_token)
                 continue
+        elif r.status_code == 429:
+            jitter = random.uniform(-5, 5)  # Jitter ranger +- 5 seconds
+            delay = TOO_MANY_REQUESTS_DELAY + jitter
+            script.logger.warning(
+                "429 Error from server - too many requests. "
+                f"Pausing for about {TOO_MANY_REQUESTS_DELAY} seconds before retrying."
+            )
+            time.sleep(delay)
+            continue
         else:
             script.logger.error(f"Error from API: {r.text}")
             sys.exit(1)
@@ -799,7 +810,8 @@ def add_new_loci(loci):
             if set(["full_name", "product", "description"]) & locus_info.keys():
                 inserts.append(
                     {
-                        "qry": "INSERT INTO locus_descriptions(locus,full_name,product,description,datestamp,curator) VALUES (%s,%s,%s,%s,%s,%s)",
+                        "qry": "INSERT INTO locus_descriptions(locus,full_name,product,description,"
+                        "datestamp,curator) VALUES (%s,%s,%s,%s,%s,%s)",
                         "values": [
                             locus,
                             locus_info.get("full_name"),
