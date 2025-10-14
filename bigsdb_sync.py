@@ -706,17 +706,29 @@ def get_remote_locus_list(schemes: list[int], loci: list[str]):
     return locus_urls
 
 
-def get_local_locus_list(schemes: [int] = None):
-    loci = []
+def get_local_locus_list(
+    schemes: list[int] | None = None, loci: list[str] | None = None
+):
+    locus_list = []
     if schemes:
         for scheme_id in schemes:
             scheme_loci = script.datastore.get_scheme_loci(scheme_id)
             if scheme_loci:
-                loci.extend(scheme_loci)
-        loci = list(dict.fromkeys(loci))
-    else:
-        loci = script.datastore.get_loci()
-    return loci
+                locus_list.extend(scheme_loci)
+    if loci:
+        all_loci = script.datastore.get_loci()
+        if all(locus in all_loci for locus in loci):
+            locus_list.extend(loci)
+        else:
+            missing = [locus for locus in loci if locus not in all_loci]
+            script.logger.error(
+                f"Following loci in your list are not defined locally: {missing}"
+            )
+            sys.exit(1)
+    locus_list = list(dict.fromkeys(locus_list))
+    if schemes == None and loci == None:
+        locus_list = script.datastore.get_loci()
+    return locus_list
 
 
 def update_seqdef(token, secret):
@@ -732,7 +744,7 @@ def update_seqdef(token, secret):
     local_count = len(local_loci)
     if remote_count != local_count:
         filtered = " (filtered)" if selected_loci or selected_schemes else ""
-        script.logger.info(
+        script.logger.debug(
             f"Remote loci{filtered}: {remote_count}; Local loci: {local_count}"
         )
         not_in_local = [x for x in remote_loci if x not in local_loci]
@@ -743,7 +755,8 @@ def update_seqdef(token, secret):
             else:
                 script.logger.info("Run with --add_new_loci to define these locally.")
     if args.add_new_seqs:
-        add_new_seqs()
+        local_loci = get_local_locus_list(schemes=selected_schemes, loci=selected_loci)
+        add_new_seqs(local_loci)
 
 
 def extract_locus_names_from_urls(urls):
@@ -888,7 +901,7 @@ def add_new_loci(loci):
             exit(1)
 
 
-def add_new_seqs():
+def add_new_seqs(loci: list[str]):
     pass
 
 
