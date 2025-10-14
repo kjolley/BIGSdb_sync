@@ -60,10 +60,13 @@ def parse_args():
         help="Set up new loci if they do not exist in local database.",
     )
     parser.add_argument(
+        "--add_new_seqs", action="store_true", help="Add new allele/variant sequences."
+    )
+    parser.add_argument(
         "--api_db_url",
         required=True,
         help="URL for the top-level database API call, e.g. "
-        "https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef",
+        "https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef.",
     )
     parser.add_argument(
         "--base_web_url",
@@ -635,7 +638,7 @@ def get_route(
             continue
         else:
             script.logger.error(f"Error from API: {r.text}")
-            sys.exit(1)
+            exit(1)
 
 
 def is_valid_json(json_string):
@@ -680,7 +683,7 @@ def check_db_types_match():
     return local
 
 
-def get_remote_locus_list(schemes: [int] = None):
+def get_remote_locus_list(schemes: list[int], loci: list[str]):
     locus_urls = []
     if schemes:
         for scheme_id in schemes:
@@ -689,11 +692,17 @@ def get_remote_locus_list(schemes: [int] = None):
             )
             if scheme_loci["loci"]:
                 locus_urls.extend(scheme_loci["loci"])
-        locus_urls = list(dict.fromkeys(locus_urls))
-    else:
+    if loci:
+        for locus in loci:
+            if re.search(r"[^\w_\-']", locus):
+                script.logger.error(f"Invalid locus name in list: {locus}.")
+            else:
+                locus_urls.append(f"{args.api_db_url}/loci/{locus}")
+    if schemes == None and loci == None:
         loci = get_route(f"{args.api_db_url}/loci?return_all=1", session_provider)
         if loci["loci"]:
             locus_urls.extend(loci["loci"])
+    locus_urls = list(dict.fromkeys(locus_urls))
     return locus_urls
 
 
@@ -712,13 +721,20 @@ def get_local_locus_list(schemes: [int] = None):
 
 def update_seqdef(token, secret):
     selected_schemes = get_selected_scheme_list()
-    remote_locus_urls = get_remote_locus_list(selected_schemes)
+    selected_loci = get_selected_locus_list()
+    remote_locus_urls = get_remote_locus_list(
+        schemes=selected_schemes, loci=selected_loci
+    )
     remote_loci = extract_locus_names_from_urls(remote_locus_urls)
+
     local_loci = get_local_locus_list()
     remote_count = len(remote_loci)
     local_count = len(local_loci)
     if remote_count != local_count:
-        script.logger.info(f"Remote loci: {remote_count}; Local loci: {local_count}")
+        filtered = " (filtered)" if selected_loci or selected_schemes else ""
+        script.logger.info(
+            f"Remote loci{filtered}: {remote_count}; Local loci: {local_count}"
+        )
         not_in_local = [x for x in remote_loci if x not in local_loci]
         if len(not_in_local):
             script.logger.info(f"Not defined in local: {not_in_local}")
@@ -726,6 +742,8 @@ def update_seqdef(token, secret):
                 add_new_loci(not_in_local)
             else:
                 script.logger.info("Run with --add_new_loci to define these locally.")
+    if args.add_new_seqs:
+        add_new_seqs()
 
 
 def extract_locus_names_from_urls(urls):
@@ -744,6 +762,12 @@ def get_selected_scheme_list():
             )
             exit(1)
         return scheme_list
+
+
+def get_selected_locus_list():
+    if args.loci:
+        locus_list = sorted({locus.strip() for locus in args.loci.split(",")})
+        return locus_list
 
 
 def add_new_loci(loci):
@@ -862,6 +886,10 @@ def add_new_loci(loci):
                 continue
             script.logger.error(f"INSERT failed - {e}")
             exit(1)
+
+
+def add_new_seqs():
+    pass
 
 
 if __name__ == "__main__":
