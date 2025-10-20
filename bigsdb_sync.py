@@ -786,6 +786,8 @@ def update_seqdef(token, secret):
             local_loci = set(remote_loci) & set(local_loci)
 
         add_new_seqs(local_loci)
+    # TODO --check_seqs
+    # TODO --update_seqs
 
 
 def extract_locus_names_from_urls(urls):
@@ -995,6 +997,12 @@ def add_new_seqs(loci: list[str]):
         url = f"{args.api_db_url}/loci/{locus}/alleles?include_records=1"
         if args.reldate != None:
             url += f"&updated_reldate={args.reldate}"
+        extended_att = script.datastore.run_query(
+            "SELECT * FROM locus_extended_attributes WHERE locus=?",
+            locus,
+            {"fetch": "all_arrayref", "slice": {}},
+        )
+
         while True:
             remote_seqs = get_route(url, session_provider)
             if args.reldate == None and len(local_allele_ids) >= remote_seqs.get(
@@ -1014,12 +1022,13 @@ def add_new_seqs(loci: list[str]):
                     if seq.get("allele_id") in local_allele_ids:
                         pass
                     else:
-                        try:
-                            cursor.execute(
-                                "INSERT INTO sequences (locus,allele_id,sequence,status,comments,"
+                        inserts = []
+                        inserts.append(
+                            {
+                                "qry": "INSERT INTO sequences (locus,allele_id,sequence,status,comments,"
                                 "type_allele,sender,curator,date_entered,datestamp) VALUES "
                                 "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                                [
+                                "values": [
                                     locus,
                                     seq.get("allele_id"),
                                     seq.get("sequence"),
@@ -1031,7 +1040,30 @@ def add_new_seqs(loci: list[str]):
                                     seq.get("date_entered"),
                                     seq.get("datestamp"),
                                 ],
-                            )
+                            }
+                        )
+                        for att in extended_att:
+                            if seq.get(att.get("field")) != None:
+                                field = att.get("field")
+                                inserts.append(
+                                    {
+                                        "qry": "INSERT INTO sequence_extended_attributes "
+                                        "(locus,field,allele_id,value,datestamp,curator) VALUES "
+                                        "(%s,%s,%s,%s,%s,%s)",
+                                        "values": [
+                                            locus,
+                                            field,
+                                            seq.get("allele_id"),
+                                            seq.get(field),
+                                            seq.get("datestamp"),
+                                            curator,
+                                        ],
+                                    }
+                                )
+
+                        try:
+                            for insert in inserts:
+                                cursor.execute(insert.get("qry"), insert.get("values"))
                             db.commit()
                             script.logger.info(
                                 f"Locus {locus}-{seq.get('allele_id')} added."
