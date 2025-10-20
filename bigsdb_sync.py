@@ -76,6 +76,12 @@ def parse_args():
         "It should not be necessary to set this for PubMLST or BIGSdb Pasteur.",
     )
     parser.add_argument(
+        "--check_seqs",
+        action="store_true",
+        help="Warn of changes to attributes of existing sequences. "
+        "Combine with --update_seqs to modify existing records if changed.",
+    )
+    parser.add_argument(
         "--cron",
         action="store_true",
         help="Script is being run as a CRON job or non-interactively. "
@@ -101,6 +107,12 @@ def parse_args():
         help="Log level. Default to ERROR when run with --cron, or INFO when run interactively.",
     )
     parser.add_argument(
+        "--reldate",
+        required=False,
+        type=int,
+        help="Only add/update records modified in the last X days.",
+    )
+    parser.add_argument(
         "--schemes", required=False, help="Comma-separated list of scheme ids."
     )
     parser.add_argument(
@@ -108,6 +120,11 @@ def parse_args():
         required=False,
         default="./.bigsdb_tokens",
         help="Directory into which keys and tokens will be saved.",
+    )
+    parser.add_argument(
+        "--update_seqs",
+        action="store_true",
+        help="Update sequence attributes if they have changed.",
     )
     return parser.parse_args()
 
@@ -754,13 +771,29 @@ def update_seqdef(token, secret):
                 add_new_loci(not_in_local)
             else:
                 script.logger.info("Run with --add_new_loci to define these locally.")
+
     if args.add_new_seqs:
         local_loci = get_local_locus_list(schemes=selected_schemes, loci=selected_loci)
+        if args.reldate != None:
+            updated_remote_locus_urls = get_route(
+                f"{args.api_db_url}/loci?return_all=1&alleles_updated_reldate={args.reldate}",
+                session_provider,
+            )
+
+            remote_loci = extract_locus_names_from_urls(
+                updated_remote_locus_urls.get("loci", [])
+            )
+            local_loci = set(remote_loci) & set(local_loci)
+
         add_new_seqs(local_loci)
 
 
 def extract_locus_names_from_urls(urls):
     return [url.rstrip("/").split("/")[-1] for url in urls]
+
+
+def extract_last_value_from_url(url):
+    return url.rstrip("/").split("/")[-1]
 
 
 def get_selected_scheme_list():
@@ -901,8 +934,124 @@ def add_new_loci(loci):
             exit(1)
 
 
+def get_local_users():
+    return script.datastore.run_query(
+        "SELECT * FROM users ORDER BY id",
+        None,
+        {"fetch": "all_arrayref", "slice": {}},
+    )
+
+
+def add_user(url):
+    user = get_route(url, session_provider)
+    db = script.db
+    cursor = db.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO users (id,user_name,surname,first_name,affiliation,status,"
+            "date_entered,datestamp,curator) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            [
+                user.get("id"),
+                f"user-{user.get('id')}",
+                user.get("surname"),
+                user.get("first_name"),
+                user.get("affiliation"),
+                "user",
+                "now",
+                "now",
+                0,
+            ],
+        )
+        db.commit()
+        script.logger.info(
+            f"User {user.get('id')}: {user.get('first_name')} {user.get('surname')} added."
+        )
+    except Exception as e:
+        db.rollback()
+        script.logger.error(f"INSERT failed - {e}")
+        exit(1)
+
+
 def add_new_seqs(loci: list[str]):
-    pass
+    users = get_local_users()
+    user_ids = {user["id"] for user in users}
+    db = script.db
+    cursor = db.cursor()
+    for locus in loci:
+        if args.check_seqs or args.update_seqs:
+            local_seqs = script.datastore.run_query(
+                "SELECT * FROM sequences WHERE locus=%s ORDER BY allele_id",
+                locus,
+                {"fetch": "all_arrayref", "slice": {}},
+            )
+        else:
+            local_seqs = script.datastore.run_query(
+                "SELECT allele_id FROM sequences WHERE locus=%s ORDER BY allele_id",
+                locus,
+                {"fetch": "all_arrayref", "slice": {}},
+            )
+        local_allele_ids = {seq["allele_id"] for seq in local_seqs}
+
+        url = f"{args.api_db_url}/loci/{locus}/alleles?include_records=1"
+        if args.reldate != None:
+            url += f"&updated_reldate={args.reldate}"
+        while True:
+            remote_seqs = get_route(url, session_provider)
+            if args.reldate == None and len(local_allele_ids) >= remote_seqs.get(
+                "records", 0
+            ):
+                break
+            if remote_seqs.get("alleles"):
+                for seq in remote_seqs.get("alleles"):
+                    sender = int(extract_last_value_from_url(seq.get("sender")))
+                    if sender not in user_ids:
+                        add_user(seq.get("sender"))
+                        user_ids.add(sender)
+                    curator = int(extract_last_value_from_url(seq.get("curator")))
+                    if curator not in user_ids:
+                        add_user(seq.get("curator"))
+                        user_ids.add(curator)
+                    if seq.get("allele_id") in local_allele_ids:
+                        pass
+                    else:
+                        try:
+                            cursor.execute(
+                                "INSERT INTO sequences (locus,allele_id,sequence,status,comments,"
+                                "type_allele,sender,curator,date_entered,datestamp) VALUES "
+                                "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                                [
+                                    locus,
+                                    seq.get("allele_id"),
+                                    seq.get("sequence"),
+                                    seq.get("status"),
+                                    seq.get("comments"),
+                                    seq.get("type_allele"),
+                                    sender,
+                                    curator,
+                                    seq.get("date_entered"),
+                                    seq.get("datestamp"),
+                                ],
+                            )
+                            db.commit()
+                            script.logger.info(
+                                f"Locus {locus}-{seq.get('allele_id')} added."
+                            )
+                        except Exception as e:
+                            db.rollback()
+                            script.logger.error(f"INSERT failed - {e}")
+                            exit(1)
+
+            else:
+                script.logger.error(f"No alleles attribute for {locus}")
+                break
+            if remote_seqs.get("paging"):
+                if remote_seqs.get("paging").get("next"):
+                    url = remote_seqs.get("paging").get("next")
+                    continue
+                else:
+                    break
+            else:
+                break
 
 
 if __name__ == "__main__":
