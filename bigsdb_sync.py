@@ -14,7 +14,7 @@
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# Version 20251011
+# Version 20251020
 import argparse
 import sys
 import os
@@ -783,7 +783,8 @@ def update_seqdef(token, secret):
             remote_loci = extract_locus_names_from_urls(
                 updated_remote_locus_urls.get("loci", [])
             )
-            local_loci = set(remote_loci) & set(local_loci)
+            local_set = set(local_loci)
+            local_loci = [locus for locus in remote_loci if locus in local_set]
 
         add_new_seqs(local_loci)
     # TODO --check_seqs
