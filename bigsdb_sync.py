@@ -1073,6 +1073,16 @@ def add_new_seqs(loci: list[str]):
             locus,
             {"fetch": "all_arrayref", "slice": {}},
         )
+        savs = script.datastore.run_query(
+            "SELECT * FROM peptide_mutations WHERE locus=?",
+            locus,
+            {"fetch": "all_arrayref", "slice": {}},
+        )
+        snps = script.datastore.run_query(
+            "SELECT * FROM dna_mutations WHERE locus=?",
+            locus,
+            {"fetch": "all_arrayref", "slice": {}},
+        )
 
         while True:
             remote_seqs = get_route(url, session_provider)
@@ -1131,7 +1141,56 @@ def add_new_seqs(loci: list[str]):
                                         ],
                                     }
                                 )
-
+                        if seq.get("SAVs"):
+                            for sav in seq.get("SAVs"):
+                                sav_ids = script.datastore.run_query(
+                                    "SELECT id FROM peptide_mutations WHERE (locus,reported_position)=(%s,%s)",
+                                    [locus, sav.get("position")],
+                                    {"fetch": "col_arrayref"},
+                                )
+                                for sav_id in sav_ids:
+                                    inserts.append(
+                                        {
+                                            "qry": "INSERT INTO sequences_peptide_mutations "
+                                            "(locus,allele_id,mutation_id,amino_acid,is_wild_type,"
+                                            "is_mutation,curator,datestamp) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                                            "values": [
+                                                locus,
+                                                seq.get("allele_id"),
+                                                sav_id,
+                                                sav.get("amino_acid"),
+                                                True if sav.get("wild_type") else False,
+                                                True if sav.get("mutation") else False,
+                                                0,
+                                                "now",
+                                            ],
+                                        }
+                                    )
+                        if seq.get("SNPs"):
+                            for snp in seq.get("SNPs"):
+                                snp_ids = script.datastore.run_query(
+                                    "SELECT id FROM dna_mutations WHERE (locus,reported_position)=(%s,%s)",
+                                    [locus, snp.get("position")],
+                                    {"fetch": "col_arrayref"},
+                                )
+                                for snp_id in snp_ids:
+                                    inserts.append(
+                                        {
+                                            "qry": "INSERT INTO sequences_dna_mutations "
+                                            "(locus,allele_id,mutation_id,nucleotide,is_wild_type,"
+                                            "is_mutation,curator,datestamp) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                                            "values": [
+                                                locus,
+                                                seq.get("allele_id"),
+                                                snp_id,
+                                                snp.get("nucleotide"),
+                                                True if snp.get("wild_type") else False,
+                                                True if snp.get("mutation") else False,
+                                                0,
+                                                "now",
+                                            ],
+                                        }
+                                    )
                         try:
                             for insert in inserts:
                                 cursor.execute(insert.get("qry"), insert.get("values"))
