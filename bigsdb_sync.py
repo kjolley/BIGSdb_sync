@@ -14,7 +14,7 @@
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# Version 20251020
+# Version 20251021
 import argparse
 import sys
 import os
@@ -766,7 +766,15 @@ def update_seqdef(token, secret):
         )
         not_in_local = [x for x in remote_loci if x not in local_loci]
         if len(not_in_local):
-            script.logger.info(f"Not defined in local: {not_in_local}")
+            if len(not_in_local) > 20:
+                if args.log_level != "DEBUG":
+                    script.logger.info(
+                        f"There are {len(not_in_local)} loci not defined in local. "
+                        "Run with --log_level DEBUG to list these."
+                    )
+                script.logger.debug(f"Not defined in local: {not_in_local}")
+            else:
+                script.logger.info(f"Not defined in local: {not_in_local}")
             if args.add_new_loci:
                 add_new_loci(not_in_local)
             else:
@@ -920,6 +928,68 @@ def add_new_loci(loci):
                                 True,
                                 "now",
                                 0,
+                            ],
+                        }
+                    )
+            if locus_info.get("SAVs"):
+                savs = locus_info.get("SAVs")
+                id = script.datastore.run_query(
+                    "SELECT COALESCE(MAX(id),0) FROM peptide_mutations"
+                )
+
+                for sav in savs:
+                    id += 1
+                    variant_aa = ";".join(sav.get("variant_aa"))
+                    wild_type_aa = ";".join(sav.get("wild_type_aa"))
+                    # Note that we cannot assign the wild_type_allele_id because this is a foreign key
+                    # pointing to the sequences table - alleles have not yet been defined!
+                    inserts.append(
+                        {
+                            "qry": "INSERT INTO peptide_mutations (id,locus,wild_type_allele_id,"
+                            "reported_position,locus_position,wild_type_aa,variant_aa,flanking_length,"
+                            "curator,datestamp) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            "values": [
+                                id,
+                                locus,
+                                None,
+                                sav.get("reported_position"),
+                                sav.get("locus_position"),
+                                wild_type_aa,
+                                variant_aa,
+                                sav.get("flanking_length"),
+                                0,
+                                "now",
+                            ],
+                        }
+                    )
+            if locus_info.get("SNPs"):
+                snps = locus_info.get("SNPs")
+                id = script.datastore.run_query(
+                    "SELECT COALESCE(MAX(id),0) FROM dna_mutations"
+                )
+
+                for snp in snps:
+                    id += 1
+                    variant_nuc = ";".join(snp.get("variant_nuc"))
+                    wild_type_nuc = ";".join(snp.get("wild_type_nuc"))
+                    # Note that we cannot assign the wild_type_allele_id because this is a foreign key
+                    # pointing to the sequences table - alleles have not yet been defined!
+                    inserts.append(
+                        {
+                            "qry": "INSERT INTO dna_mutations (id,locus,wild_type_allele_id,"
+                            "reported_position,locus_position,wild_type_nuc,variant_nuc,flanking_length,"
+                            "curator,datestamp) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            "values": [
+                                id,
+                                locus,
+                                None,
+                                snp.get("reported_position"),
+                                snp.get("locus_position"),
+                                wild_type_nuc,
+                                variant_nuc,
+                                snp.get("flanking_length"),
+                                0,
+                                "now",
                             ],
                         }
                     )
