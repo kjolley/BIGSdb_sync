@@ -23,42 +23,54 @@ from utils import parse_args, init_logger, check_required_args, check_token_dir
 from token_provider import TokenProvider
 from auth import get_new_session_token
 import sync
+from errors import BIGSdbSyncError, ConfigError, AuthError, APIError
 
 
 def main():
-    config.args = parse_args()
-    # logger must be set early because many functions call script.logger
-    logger = init_logger()
-    # create Script object
     try:
-        config.script = Script(database=config.args.db, logger=logger)
+        config.args = parse_args()
+        logger = init_logger()
+        try:
+            config.script = Script(database=config.args.db, logger=logger)
+        except Exception as e:
+            raise ConfigError(
+                f"Error setting up script object for config {config.args.db}. {e}"
+            )
+
+        check_required_args()
+        check_token_dir(config.args.token_dir)
+
+        config.session_provider = TokenProvider(
+            config.args.token_dir, config.args.key_name, token_type="session"
+        )
+        config.access_provider = TokenProvider(
+            config.args.token_dir, config.args.key_name, token_type="access"
+        )
+
+        token, secret = config.session_provider.get()
+        if not token or not secret:
+            token, secret = get_new_session_token()
+            config.session_provider.set(token, secret)
+
+        db_type = sync.get_db_type()
+        if db_type == "seqdef":
+            sync.update_seqdef()
+        else:
+            logger.error("Only seqdef sync implemented in this refactor.")
+    except (ConfigError, AuthError, APIError) as e:
+        # Log and exit with non-zero code. Keep error messages clear for callers.
+        # If we have script/logger set up, use it; otherwise print to stderr.
+        if hasattr(config, "script") and config.script:
+            config.script.logger.error(str(e))
+        else:
+            sys.stderr.write(f"ERROR: {e}\n")
+        sys.exit(1)
     except Exception as e:
-        sys.exit(f"Error setting up script object for config {config.args.db}. {e}")
+        # Unexpected / programming error — print traceback to help debugging.
+        import traceback
 
-    check_required_args()
-    # ensure token dir exists and is writable
-    check_token_dir(config.args.token_dir)
-
-    # create token providers
-    config.session_provider = TokenProvider(
-        config.args.token_dir, config.args.key_name, token_type="session"
-    )
-    config.access_provider = TokenProvider(
-        config.args.token_dir, config.args.key_name, token_type="access"
-    )
-
-    # ensure we have a session token
-    token, secret = config.session_provider.get()
-    if not token or not secret:
-        token, secret = get_new_session_token()
-        config.session_provider.set(token, secret)
-
-    # determine DB type and run appropriate sync
-    db_type = sync.get_db_type()
-    if db_type == "seqdef":
-        sync.update_seqdef()
-    else:
-        logger.error("Only seqdef sync implemented currently.")
+        traceback.print_exc()
+        sys.exit(2)
 
 
 if __name__ == "__main__":

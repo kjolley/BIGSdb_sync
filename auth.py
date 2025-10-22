@@ -14,52 +14,15 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-import os
-import stat
-import configparser
-from pathlib import Path
-from urllib.parse import parse_qs
-from rauth import OAuth1Service, OAuth1Session
 import re
 import sys
-
+from pathlib import Path
+from rauth import OAuth1Service, OAuth1Session
 import config
 from token_provider import TokenProvider
+from oauth_utils import get_client_credentials
 from api_client import get_response_content
-
-
-def get_client_credentials():
-    configp = configparser.ConfigParser(interpolation=None)
-    file_path = Path(f"{config.args.token_dir}/client_credentials")
-    client_id = None
-    if file_path.is_file():
-        configp.read(file_path)
-        if configp.has_section(config.args.key_name):
-            client_id = configp[config.args.key_name]["client_id"]
-            client_secret = configp[config.args.key_name]["client_secret"]
-    if not client_id:
-        if config.args.cron:
-            config.script.logger.error(
-                f"No client credentials saved for {config.args.key_name}. Run interactively to set."
-            )
-            sys.exit(1)
-        client_id = input("Enter client id: ").strip()
-        while len(client_id) != 24:
-            print("Client ids are exactly 24 characters long.")
-            client_id = input("Enter client id: ").strip()
-        client_secret = input("Enter client secret: ").strip()
-        while len(client_secret) != 42:
-            print("Client secrets are exactly 42 characters long.")
-            client_secret = input("Enter client secret: ").strip()
-
-        configp[config.args.key_name] = {
-            "client_id": client_id,
-            "client_secret": client_secret,
-        }
-        with open(file_path, "w") as configfile:
-            configp.write(configfile)
-        os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
-    return client_id, client_secret
+from errors import AuthError, ConfigError
 
 
 def get_db_value():
@@ -94,7 +57,7 @@ def get_new_request_token():
     )
     if r.status_code == 404:
         config.script.logger.error(f"404 Page not found. {config.args.api_db_url}.")
-        sys.exit(1)
+        raise AuthError("404 getting raw request token")
     if r.status_code == 200:
         response_json = get_response_content(r)
         token = response_json.get("oauth_token", "")
@@ -107,7 +70,7 @@ def get_new_request_token():
             payload = {}
         msg = payload.get("message", "") if isinstance(payload, dict) else ""
         config.script.logger.error(f"Failed to get new request token. {msg}")
-        sys.exit(1)
+        raise AuthError(f"Failed to get request token: {msg}")
 
 
 def get_new_access_token():
@@ -152,7 +115,7 @@ def get_new_access_token():
             payload = {}
         msg = payload.get("message", "") if isinstance(payload, dict) else ""
         config.script.logger.error(f"Failed to get new access token. {msg}")
-        sys.exit(1)
+        raise AuthError(f"Failed to get new access token: {msg}")
 
 
 def get_new_session_token():
@@ -187,7 +150,7 @@ def get_new_session_token():
         if re.search("verification", msg) or re.search("Invalid access token", msg):
             config.script.logger.error("New access token required - removing old one.")
             config.access_provider.set(None, None)
-        sys.exit(1)
+        raise AuthError(f"Failed to get new session token: {msg}")
 
 
 def get_base_web():
@@ -200,4 +163,4 @@ def get_base_web():
     config.script.logger.error(
         "Base web URL not determined. Please set with --base_web_url."
     )
-    sys.exit(1)
+    raise ConfigError("Base web URL not determined.")
