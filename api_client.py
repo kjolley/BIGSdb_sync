@@ -164,6 +164,8 @@ def get_route(url, token_provider, method="GET", json_body=None):
                 # use token_provider.refresh which will call back to get_new_session_token
                 token_provider.refresh(get_new_session_token)
                 continue
+        elif r.status_code == 404:
+            raise APIError(f"404 Error - Page not found.")
         elif r.status_code == 429:
             jitter = random.uniform(-5, 5)
             delay = config.TOO_MANY_REQUESTS_DELAY + jitter

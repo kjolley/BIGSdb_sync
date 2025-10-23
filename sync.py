@@ -48,7 +48,7 @@ def get_remote_db_type():
             return "seqdef"
         raise DBError("Cannot determine remote database type.")
     except Exception as e:
-        raise DBError(f"Failed to fetch top level database route: {e}") from e
+        raise APIError(f"Failed to fetch top level database route: {e}") from e
 
 
 def get_local_users():

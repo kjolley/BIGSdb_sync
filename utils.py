@@ -224,9 +224,7 @@ def check_api_dns(api_url, retries=0, backoff=2):
     parsed = urlparse(api_url)
     host = parsed.hostname
     if not host:
-        config.script.logger.error(
-            f"ERROR: Unable to extract hostname from URL: {api_url}"
-        )
+        config.script.logger.error(f"Unable to extract hostname from URL: {api_url}")
         return False
 
     attempt = 0
@@ -244,7 +242,7 @@ def check_api_dns(api_url, retries=0, backoff=2):
             attempt += 1
             if attempt > retries:
                 config.script.logger.error(
-                    f"ERROR: DNS lookup failed for host '{host}' (from URL: {api_url}).\n"
+                    f"DNS lookup failed for host '{host}' (from URL: {api_url}).\n"
                     f"socket.gaierror: {e}\n"
                     "Check DNS, host name, or network connectivity."
                 )
@@ -252,12 +250,12 @@ def check_api_dns(api_url, retries=0, backoff=2):
             else:
                 wait = backoff * (2 ** (attempt - 1))
                 config.script.logger.warning(
-                    f"WARNING: DNS lookup failed for '{host}', retry {attempt}/{retries} after {wait}s..."
+                    f"DNS lookup failed for '{host}', retry {attempt}/{retries} after {wait}s..."
                 )
                 time.sleep(wait)
         except Exception as e:
             # catch unexpected errors (permission, etc.)
             config.script.logger.error(
-                f"ERROR: Unexpected error resolving host '{host}': {e}", file=sys.stderr
+                f"Unexpected error resolving host '{host}': {e}", file=sys.stderr
             )
             return False
