@@ -35,9 +35,6 @@ def get_response_content(r) -> Any:
             return r.json()
         except Exception as exc:
             text = getattr(r, "text", "") or ""
-            config.script.logger.error(
-                "Response declared JSON but could not parse JSON."
-            )
             raise APIError(
                 f"Invalid JSON response (status {getattr(r, 'status_code', 'unknown')}): {text[:1000]}"
             ) from exc

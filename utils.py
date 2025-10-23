@@ -23,6 +23,7 @@ import logging
 import sys
 
 import config
+from errors import ConfigError
 
 
 def parse_args():
@@ -154,11 +155,10 @@ def init_logger():
 
 def check_required_args():
     if not re.search(r"^https?://.*/db/[A-Za-z0-9_-]+$", config.args.api_db_url):
-        config.script.logger.error(
+        raise ConfigError(
             "--api_db_url should be a valid URL (starting with http(s):// and\n"
             "ending with /db/xxx where xxx is a database configuration)."
         )
-        sys.exit(1)
 
 
 def check_token_dir(directory):
@@ -166,19 +166,15 @@ def check_token_dir(directory):
         if os.access(directory, os.W_OK):
             return
         else:
-            config.script.logger.critical(
+            raise ConfigError(
                 f"The token directory '{directory}' exists but is not writable."
             )
-            sys.exit(1)
     else:
         try:
             os.makedirs(directory)
             os.chmod(directory, stat.S_IRWXU)  # Set permissions to 0700
         except OSError as e:
-            config.script.logger.critical(
-                f"Failed to create token directory '{directory}': {e}"
-            )
-            sys.exit(1)
+            raise ConfigError(f"Failed to create token directory '{directory}': {e}")
 
 
 def extract_locus_names_from_urls(urls):
@@ -196,10 +192,9 @@ def get_selected_scheme_list():
                 {int(scheme_id.strip()) for scheme_id in config.args.schemes.split(",")}
             )
         except ValueError as e:
-            config.script.logger.error(
-                "Invalid non-integer value found in --schemes argument."
+            raise ConfigError(
+                f"Invalid non-integer value found in --schemes argument. {e}"
             )
-            sys.exit(1)
         return scheme_list
 
 

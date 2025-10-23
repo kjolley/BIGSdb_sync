@@ -24,6 +24,7 @@ from utils import (
     extract_last_value_from_url,
     extract_locus_names_from_urls,
 )
+from errors import DBError, APIError, ConfigError
 
 
 def get_db_type():
@@ -32,24 +33,28 @@ def get_db_type():
             "SELECT value FROM db_attributes WHERE field=?", "type"
         )
     except ValueError as e:
-        config.script.logger.error("Could not determine local database type.")
-        sys.exit(1)
+        raise DBError("Could not determine local database type.") from e
     if db_type not in ("seqdef", "isolates"):
-        config.script.logger.error("Invalid db_type for local database.")
-        sys.exit(1)
+        raise ConfigError("Invalid db_type for local database.")
     return db_type
 
 
 def get_local_users():
-    return config.script.datastore.run_query(
-        "SELECT * FROM users ORDER BY id",
-        None,
-        {"fetch": "all_arrayref", "slice": {}},
-    )
+    try:
+        return config.script.datastore.run_query(
+            "SELECT * FROM users ORDER BY id",
+            None,
+            {"fetch": "all_arrayref", "slice": {}},
+        )
+    except Exception as e:
+        raise DBError(f"Failed to fetch local users: {e}") from e
 
 
 def add_user(url: str):
-    user = get_route(url, config.session_provider)
+    try:
+        user = get_route(url, config.session_provider)
+    except Exception as e:
+        raise APIError(f"Failed to fetch user from {url}: {e}") from e
     db = config.script.db
     cursor = db.cursor()
     try:
@@ -74,8 +79,7 @@ def add_user(url: str):
         )
     except Exception as e:
         db.rollback()
-        config.script.logger.error(f"INSERT failed - {e}")
-        sys.exit(1)
+        raise DBError(f"INSERT failed adding user {url}: {e}") from e
 
 
 def get_remote_locus_list(schemes: Optional[List[int]], loci: Optional[List[str]]):
@@ -108,25 +112,25 @@ def get_local_locus_list(
     schemes: Optional[List[int]] = None, loci: Optional[List[str]] = None
 ):
     locus_list = []
-    if schemes:
-        for scheme_id in schemes:
-            scheme_loci = config.script.datastore.get_scheme_loci(scheme_id)
-            if scheme_loci:
-                locus_list.extend(scheme_loci)
-    if loci:
-        all_loci = config.script.datastore.get_loci()
-        if all(locus in all_loci for locus in loci):
-            locus_list.extend(loci)
-        else:
-            missing = [locus for locus in loci if locus not in all_loci]
-            config.script.logger.error(
-                f"Following loci in your list are not defined locally: {missing}"
-            )
-            sys.exit(1)
-    locus_list = list(dict.fromkeys(locus_list))
-    if schemes is None and loci is None:
-        locus_list = config.script.datastore.get_loci()
-    return locus_list
+    try:
+        if schemes:
+            for scheme_id in schemes:
+                scheme_loci = config.script.datastore.get_scheme_loci(scheme_id)
+                if scheme_loci:
+                    locus_list.extend(scheme_loci)
+        if loci:
+            all_loci = config.script.datastore.get_loci()
+            if all(locus in all_loci for locus in loci):
+                locus_list.extend(loci)
+            else:
+                missing = [locus for locus in loci if locus not in all_loci]
+                raise ConfigError(f"Following loci not defined locally: {missing}")
+        locus_list = list(dict.fromkeys(locus_list))
+        if schemes is None and loci is None:
+            locus_list = config.script.datastore.get_loci()
+        return locus_list
+    except Exception as e:
+        raise DBError(f"Failed to build local locus list: {e}") from e
 
 
 def add_new_loci(loci: List[str]):
@@ -305,8 +309,7 @@ def add_new_loci(loci: List[str]):
             if "already exists" in str(e):
                 config.script.logger.warning(f"Locus {locus} already exists. Skipped.")
                 continue
-            config.script.logger.error(f"INSERT failed - {e}")
-            sys.exit(1)
+            raise DBError(f"INSERT failed adding locus {locus}: {e}") from e
 
 
 def add_new_seqs(loci: List[str]):
@@ -356,11 +359,21 @@ def add_new_seqs(loci: List[str]):
                 break
             if remote_seqs.get("alleles"):
                 for seq in remote_seqs.get("alleles"):
-                    sender = int(extract_last_value_from_url(seq.get("sender")))
+                    try:
+                        sender = int(extract_last_value_from_url(seq.get("sender")))
+                    except Exception:
+                        raise APIError(
+                            f"Invalid sender value in remote allele record: {seq}"
+                        )
                     if sender not in user_ids:
                         add_user(seq.get("sender"))
                         user_ids.add(sender)
-                    curator = int(extract_last_value_from_url(seq.get("curator")))
+                    try:
+                        curator = int(extract_last_value_from_url(seq.get("curator")))
+                    except Exception:
+                        raise APIError(
+                            f"Invalid curator value in remote allele record: {seq}"
+                        )
                     if curator not in user_ids:
                         add_user(seq.get("curator"))
                         user_ids.add(curator)
@@ -464,8 +477,9 @@ def add_new_seqs(loci: List[str]):
                             )
                         except Exception as e:
                             db.rollback()
-                            config.script.logger.error(f"INSERT failed - {e}")
-                            sys.exit(1)
+                            raise DBError(
+                                f"INSERT failed adding sequence {locus}-{seq.get('allele_id')}: {e}"
+                            ) from e
 
             else:
                 config.script.logger.error(f"No alleles attribute for {locus}")
@@ -489,10 +503,7 @@ def update_seqdef():
                 {int(scheme_id.strip()) for scheme_id in config.args.schemes.split(",")}
             )
         except ValueError:
-            config.script.logger.error(
-                "Invalid non-integer value found in --schemes argument."
-            )
-            sys.exit(1)
+            raise ConfigError("Invalid non-integer value found in --schemes argument.")
     if config.args.loci:
         selected_loci = sorted({locus.strip() for locus in config.args.loci.split(",")})
 

@@ -23,7 +23,8 @@ from utils import parse_args, init_logger, check_required_args, check_token_dir
 from token_provider import TokenProvider
 from auth import get_new_session_token
 import sync
-from errors import BIGSdbSyncError, ConfigError, AuthError, APIError
+import traceback
+from errors import BIGSdbSyncError, ConfigError, AuthError, APIError, DBError
 
 
 def main():
@@ -57,17 +58,18 @@ def main():
             sync.update_seqdef()
         else:
             logger.error("Only seqdef sync implemented in this refactor.")
-    except (ConfigError, AuthError, APIError) as e:
+    except (ConfigError, AuthError, APIError, DBError) as e:
         # Log and exit with non-zero code. Keep error messages clear for callers.
         # If we have script/logger set up, use it; otherwise print to stderr.
         if hasattr(config, "script") and config.script:
             config.script.logger.error(str(e))
+            if config.args.log_level == "DEBUG":
+                traceback.print_exc()
         else:
             sys.stderr.write(f"ERROR: {e}\n")
         sys.exit(1)
     except Exception as e:
         # Unexpected / programming error — print traceback to help debugging.
-        import traceback
 
         traceback.print_exc()
         sys.exit(2)

@@ -15,11 +15,9 @@
 # GNU General Public License for more details.
 
 import re
-import sys
 from pathlib import Path
 from rauth import OAuth1Service, OAuth1Session
 import config
-from token_provider import TokenProvider
 from oauth_utils import get_client_credentials
 from api_client import get_response_content
 from errors import AuthError, ConfigError
@@ -35,7 +33,6 @@ def get_db_value():
 
 
 def get_service():
-    db = get_db_value()
     (client_key, client_secret) = get_client_credentials()
     request_token_url = f"{config.args.api_db_url}/oauth/get_request_token"
     access_token_url = f"{config.args.api_db_url}/oauth/get_access_token"
@@ -56,8 +53,7 @@ def get_new_request_token():
         params={"oauth_callback": "oob"}, headers={"User-Agent": config.USER_AGENT}
     )
     if r.status_code == 404:
-        config.script.logger.error(f"404 Page not found. {config.args.api_db_url}.")
-        raise AuthError("404 getting raw request token")
+        raise AuthError(f"404 Page not found. {config.args.api_db_url}.")
     if r.status_code == 200:
         response_json = get_response_content(r)
         token = response_json.get("oauth_token", "")
@@ -69,17 +65,13 @@ def get_new_request_token():
         except ValueError:
             payload = {}
         msg = payload.get("message", "") if isinstance(payload, dict) else ""
-        config.script.logger.error(f"Failed to get new request token. {msg}")
         raise AuthError(f"Failed to get request token: {msg}")
 
 
 def get_new_access_token():
     web_base_url = get_base_web()
     if config.args.cron:
-        config.script.logger.error(
-            f"No access token saved for {config.args.key_name}. Run interactively to set (without --cron)."
-        )
-        sys.exit(1)
+        raise AuthError(f"No access token saved for {config.args.key_name}.")
     file_path = Path(f"{config.args.token_dir}/access_tokens")
     (request_token, request_secret) = get_new_request_token()
     db = get_db_value()
@@ -114,7 +106,6 @@ def get_new_access_token():
         except ValueError:
             payload = {}
         msg = payload.get("message", "") if isinstance(payload, dict) else ""
-        config.script.logger.error(f"Failed to get new access token. {msg}")
         raise AuthError(f"Failed to get new access token: {msg}")
 
 
@@ -122,7 +113,6 @@ def get_new_session_token():
     (access_token, access_secret) = config.access_provider.get()
     if not access_token or not access_secret:
         (access_token, access_secret) = get_new_access_token()
-    service = get_service()
     (client_key, client_secret) = get_client_credentials()
     session_request = OAuth1Session(
         client_key,
@@ -160,7 +150,4 @@ def get_base_web():
         return config.BASE_WEB["PubMLST"]
     if re.search(r"bigsdb.pasteur.fr", config.args.api_db_url):
         return config.BASE_WEB["Pasteur"]
-    config.script.logger.error(
-        "Base web URL not determined. Please set with --base_web_url."
-    )
-    raise ConfigError("Base web URL not determined.")
+    raise ConfigError("Base web URL not determined. Please set with --base_web_url.")

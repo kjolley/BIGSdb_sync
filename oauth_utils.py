@@ -45,10 +45,9 @@ def get_client_credentials() -> Tuple[str, str]:
             client_secret = cfg[config.args.key_name].get("client_secret")
     if not client_id:
         if config.args.cron:
-            config.script.logger.error(
+            raise ConfigError(
                 f"No client credentials saved for {config.args.key_name}. Run interactively to set."
             )
-            raise ConfigError("Missing client credentials (cron mode).")
         # interactive prompt
         client_id = input("Enter client id: ").strip()
         while len(client_id) != 24:
