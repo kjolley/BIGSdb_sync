@@ -53,11 +53,19 @@ def main():
             token, secret = get_new_session_token()
             config.session_provider.set(token, secret)
 
-        db_type = sync.get_db_type()
-        if db_type == "seqdef":
+        remote_db_type = sync.get_remote_db_type()
+
+        local_db_type = sync.get_local_db_type()
+        if remote_db_type != local_db_type:
+            raise ConfigError(
+                f"Remote db type: {remote_db_type}; Local db type: {local_db_type}. "
+                "DATABASE MISMATCH!"
+            )
+
+        if local_db_type == "seqdef":
             sync.update_seqdef()
         else:
-            logger.error("Only seqdef sync implemented in this refactor.")
+            raise ConfigError("Only seqdef sync currently implemented.")
     except (ConfigError, AuthError, APIError, DBError) as e:
         # Log and exit with non-zero code. Keep error messages clear for callers.
         # If we have script/logger set up, use it; otherwise print to stderr.

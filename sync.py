@@ -27,7 +27,7 @@ from utils import (
 from errors import DBError, APIError, ConfigError
 
 
-def get_db_type():
+def get_local_db_type():
     try:
         db_type = config.script.datastore.run_query(
             "SELECT value FROM db_attributes WHERE field=?", "type"
@@ -37,6 +37,18 @@ def get_db_type():
     if db_type not in ("seqdef", "isolates"):
         raise ConfigError("Invalid db_type for local database.")
     return db_type
+
+
+def get_remote_db_type():
+    try:
+        response = get_route(config.args.api_db_url, config.session_provider)
+        if "isolates" in response:
+            return "isolates"
+        elif "sequences" in response:
+            return "seqdef"
+        raise DBError("Cannot determine remote database type.")
+    except Exception as e:
+        raise DBError(f"Failed to fetch top level database route: {e}") from e
 
 
 def get_local_users():
