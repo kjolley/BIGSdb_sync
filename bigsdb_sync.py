@@ -19,7 +19,13 @@ import sys
 from bigsdb.script import Script
 
 import config
-from utils import parse_args, init_logger, check_required_args, check_token_dir
+from utils import (
+    parse_args,
+    init_logger,
+    check_required_args,
+    check_token_dir,
+    check_api_dns,
+)
 from token_provider import TokenProvider
 from auth import get_new_session_token
 import sync
@@ -37,7 +43,9 @@ def main():
             raise ConfigError(
                 f"Error setting up script object for config {config.args.db}. {e}"
             )
-
+        if not check_api_dns(config.args.api_db_url, retries=2, backoff=2):
+            # fail fast with a clear message
+            sys.exit(2)
         check_required_args()
         check_token_dir(config.args.token_dir)
 

@@ -21,6 +21,10 @@ import stat
 from pathlib import Path
 import logging
 import sys
+import socket
+from urllib.parse import urlparse
+import time
+import sys
 
 import config
 from errors import ConfigError
@@ -202,3 +206,58 @@ def get_selected_locus_list():
     if config.args.loci:
         locus_list = sorted({locus.strip() for locus in config.args.loci.split(",")})
         return locus_list
+
+
+def check_api_dns(api_url, retries=0, backoff=2):
+    """
+    Check DNS resolution for the host in api_url.
+
+    Returns True if resolved, False if not.
+    retries: number of additional resolution attempts (0 = no retry)
+    backoff: base seconds between retries (backoff multiplier applied)
+    """
+
+    if not api_url:
+        config.script.logger.error("test")
+        return False
+
+    parsed = urlparse(api_url)
+    host = parsed.hostname
+    if not host:
+        config.script.logger.error(
+            f"ERROR: Unable to extract hostname from URL: {api_url}"
+        )
+        return False
+
+    attempt = 0
+    while True:
+        try:
+            # getaddrinfo is recommended: supports IPv4/IPv6 and is portable
+            socket.getaddrinfo(
+                host,
+                parsed.port or None,
+                family=socket.AF_UNSPEC,
+                type=socket.SOCK_STREAM,
+            )
+            return True
+        except socket.gaierror as e:
+            attempt += 1
+            if attempt > retries:
+                config.script.logger.error(
+                    f"ERROR: DNS lookup failed for host '{host}' (from URL: {api_url}).\n"
+                    f"socket.gaierror: {e}\n"
+                    "Check DNS, host name, or network connectivity."
+                )
+                return False
+            else:
+                wait = backoff * (2 ** (attempt - 1))
+                config.script.logger.warning(
+                    f"WARNING: DNS lookup failed for '{host}', retry {attempt}/{retries} after {wait}s..."
+                )
+                time.sleep(wait)
+        except Exception as e:
+            # catch unexpected errors (permission, etc.)
+            config.script.logger.error(
+                f"ERROR: Unexpected error resolving host '{host}': {e}", file=sys.stderr
+            )
+            return False
