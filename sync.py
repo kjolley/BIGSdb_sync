@@ -204,7 +204,7 @@ def add_new_loci(loci: List[str]):
                         "values": [locus, alias, 0, "now"],
                     }
                 )
-        db_type = get_db_type()
+        db_type = get_local_db_type()
         if db_type == "seqdef":
             # locus_descriptions
             if set(["full_name", "product", "description"]) & locus_info.keys():

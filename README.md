@@ -54,14 +54,16 @@ details.
 Set up the credentials for the first time by running the script, providing the
 URL for the top-level database API call that your account has access to, e.g. 
 https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef and the configuration name
-of the local database that you will be synchronising to.
+of the local database that you will be synchronizing to.
 
-```
-./bigsdb_sync.py --key_name PubMLST --db test_seqdef --api_db_url https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef
+```shell
+./bigsdb_sync.py --key_name PubMLST \
+                 --db test_seqdef \
+                 --api_db_url https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef
 ```
 This will then prompt you to enter the client key and client secret that you 
 have obtained. These will be stored as the provided key name in the 
-token_directory (./bigsdb_tokens by default but can be set using --token_dir 
+token_directory (./.bigsdb_tokens by default but can be set using --token_dir 
 argument).
 
 You will then be prompted to login to a particular page on the BIGSdb site and
@@ -72,3 +74,47 @@ an access token will be saved that will be used for all future access.
 Session tokens will be obtained and renewed automatically by the script as 
 required using your client key and access token.
 
+## Setting up loci in local database
+Use the `--add_new_loci argument` to set up new local loci based on loci found
+in the remote database. You can filter this to a defined list using the 
+`--add_new_loci argument` followed by a comma-separated list, e.g.
+
+```shell
+./bigsdb_sync.py --key_name PubMLST \
+                 --db test_seqdef \
+                 --api_db_url https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef \
+                 --add_new_loci \
+                 --loci abcZ,adk,aroE
+```
+
+You can also set up all loci that are members of schemes in the remote 
+database using the `--schemes` argument followed by a comma-separated list of
+scheme ids, e.g.
+
+```shell
+./bigsdb_sync.py --key_name PubMLST \
+                 --db test_seqdef \
+                 --api_db_url https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef \
+                 --add_new_loci \
+                 --schemes 1
+```
+
+## Adding new alleles
+Use the `add_new_seqs` argument to retrieve and add new alleles to the local
+database. You can use the `--loci` and `--schemes` filters to restrict the 
+loci to update. You can also limit the update to only those modified in the 
+last X days using the `--reldate` argument, e.g.
+
+```shell
+./bigsdb_sync.py --key_name PubMLST \
+                 --db test_seqdef \
+                 --api_db_url https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef \
+                 --add_new_seqs \
+                 --reldate 7
+```
+
+Using `--reldate` is much more efficient because the API can provide a list of
+loci for which alleles have been modified in the specified time, and then also 
+only return those alleles, so it reduces the number of calls required. If you 
+don't set `--reldate` then all alleles for a locus will be retrieved from the 
+API and the script will filter these to add just the new ones.
