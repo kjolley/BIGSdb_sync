@@ -118,3 +118,8 @@ loci for which alleles have been modified in the specified time, and then also
 only return those alleles, so it reduces the number of calls required. If you 
 don't set `--reldate` then all alleles for a locus will be retrieved from the 
 API and the script will filter these to add just the new ones.
+
+Note that the `--schemes` filter here requires that the schemes used are
+defined in the local database. This is different from the `--add_new_loci`
+argument which necessarily uses schemes defined remotely (since the loci do
+not exist locally yet and so cannot belong to a local scheme).
