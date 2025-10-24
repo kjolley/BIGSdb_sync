@@ -382,7 +382,15 @@ def add_or_check_new_seqs(loci: List[str]):
             if remote_seqs.get("alleles"):
                 for seq in remote_seqs.get("alleles"):
                     if seq.get("allele_id") in local_allele_ids:
-                        pass
+                        if should_check_existing:
+                            check_seq(
+                                locus=locus,
+                                seq=seq,
+                                user_ids=user_ids,
+                                extended_att=extended_att,
+                                savs=savs,
+                                snps=snps,
+                            )
                     else:
                         add_new_seq(
                             locus=locus,
@@ -392,7 +400,6 @@ def add_or_check_new_seqs(loci: List[str]):
                             savs=savs,
                             snps=snps,
                         )
-
             else:
                 config.script.logger.error(f"No alleles attribute for {locus}")
                 break
@@ -406,157 +413,172 @@ def add_or_check_new_seqs(loci: List[str]):
                 break
 
 
-def add_new_seq(locus, seq, user_ids, extended_att, savs, snps):
-    db = config.script.db
-
+def check_record_users(record, user_ids):
     try:
-        sender = int(extract_last_value_from_url(seq.get("sender")))
+        sender = int(extract_last_value_from_url(record.get("sender")))
     except Exception:
-        raise APIError(f"Invalid sender value in remote allele record: {seq}")
+        raise APIError(f"Invalid sender value in remote record: {record}")
     if sender not in user_ids:
-        add_user(seq.get("sender"))
+        add_user(record.get("sender"))
         user_ids.add(sender)
     try:
-        curator = int(extract_last_value_from_url(seq.get("curator")))
+        curator = int(extract_last_value_from_url(record.get("curator")))
     except Exception:
-        raise APIError(f"Invalid curator value in remote allele record: {seq}")
+        raise APIError(f"Invalid curator value in remote record: {record}")
     if curator not in user_ids:
-        add_user(seq.get("curator"))
+        add_user(record.get("curator"))
         user_ids.add(curator)
+    return sender, curator
 
-    else:
-        inserts = []
-        inserts.append(
-            {
-                "qry": "INSERT INTO sequences (locus,allele_id,sequence,status,comments,"
-                "type_allele,sender,curator,date_entered,datestamp) VALUES "
-                "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                "values": [
-                    locus,
-                    seq.get("allele_id"),
-                    seq.get("sequence"),
-                    seq.get("status"),
-                    seq.get("comments"),
-                    seq.get("type_allele"),
-                    sender,
-                    curator,
-                    seq.get("date_entered"),
-                    seq.get("datestamp"),
-                ],
-            }
-        )
-        for att in extended_att:
-            if seq.get(att.get("field")) is not None:
-                field = att.get("field")
+
+def check_seq(locus, seq, user_ids, extended_att, savs, snps):
+    db = config.script.db
+    sender, curator = check_record_users(seq, user_ids)
+    local_record = config.script.datastore.run_query(
+        "SELECT * FROM sequences WHERE (locus,allele_id)=(?,?)",
+        [locus, seq.get("allele_id")],
+        {"fetch": "row_hashref"},
+    )
+    raise ConfigError("--check_seq not implemented yet.")
+    print(local_record)
+
+
+def add_new_seq(locus, seq, user_ids, extended_att, savs, snps):
+    db = config.script.db
+    sender, curator = check_record_users(seq, user_ids)
+
+    inserts = []
+    inserts.append(
+        {
+            "qry": "INSERT INTO sequences (locus,allele_id,sequence,status,comments,"
+            "type_allele,sender,curator,date_entered,datestamp) VALUES "
+            "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "values": [
+                locus,
+                seq.get("allele_id"),
+                seq.get("sequence"),
+                seq.get("status"),
+                seq.get("comments"),
+                seq.get("type_allele"),
+                sender,
+                curator,
+                seq.get("date_entered"),
+                seq.get("datestamp"),
+            ],
+        }
+    )
+    for att in extended_att:
+        if seq.get(att.get("field")) is not None:
+            field = att.get("field")
+            inserts.append(
+                {
+                    "qry": "INSERT INTO sequence_extended_attributes "
+                    "(locus,field,allele_id,value,datestamp,curator) VALUES "
+                    "(%s,%s,%s,%s,%s,%s)",
+                    "values": [
+                        locus,
+                        field,
+                        seq.get("allele_id"),
+                        seq.get(field),
+                        seq.get("datestamp"),
+                        curator,
+                    ],
+                }
+            )
+    if seq.get("SAVs"):
+        for sav in seq.get("SAVs"):
+            sav_ids = config.script.datastore.run_query(
+                "SELECT id FROM peptide_mutations WHERE (locus,reported_position)=(%s,%s)",
+                [locus, sav.get("position")],
+                {"fetch": "col_arrayref"},
+            )
+            for sav_id in sav_ids:
                 inserts.append(
                     {
-                        "qry": "INSERT INTO sequence_extended_attributes "
-                        "(locus,field,allele_id,value,datestamp,curator) VALUES "
-                        "(%s,%s,%s,%s,%s,%s)",
-                        "values": [
-                            locus,
-                            field,
-                            seq.get("allele_id"),
-                            seq.get(field),
-                            seq.get("datestamp"),
-                            curator,
-                        ],
-                    }
-                )
-        if seq.get("SAVs"):
-            for sav in seq.get("SAVs"):
-                sav_ids = config.script.datastore.run_query(
-                    "SELECT id FROM peptide_mutations WHERE (locus,reported_position)=(%s,%s)",
-                    [locus, sav.get("position")],
-                    {"fetch": "col_arrayref"},
-                )
-                for sav_id in sav_ids:
-                    inserts.append(
-                        {
-                            "qry": "INSERT INTO sequences_peptide_mutations "
-                            "(locus,allele_id,mutation_id,amino_acid,is_wild_type,"
-                            "is_mutation,curator,datestamp) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                            "values": [
-                                locus,
-                                seq.get("allele_id"),
-                                sav_id,
-                                sav.get("amino_acid"),
-                                True if sav.get("wild_type") else False,
-                                True if sav.get("mutation") else False,
-                                0,
-                                "now",
-                            ],
-                        }
-                    )
-        if seq.get("SNPs"):
-            for snp in seq.get("SNPs"):
-                snp_ids = config.script.datastore.run_query(
-                    "SELECT id FROM dna_mutations WHERE (locus,reported_position)=(%s,%s)",
-                    [locus, snp.get("position")],
-                    {"fetch": "col_arrayref"},
-                )
-                for snp_id in snp_ids:
-                    inserts.append(
-                        {
-                            "qry": "INSERT INTO sequences_dna_mutations "
-                            "(locus,allele_id,mutation_id,nucleotide,is_wild_type,"
-                            "is_mutation,curator,datestamp) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                            "values": [
-                                locus,
-                                seq.get("allele_id"),
-                                snp_id,
-                                snp.get("nucleotide"),
-                                True if snp.get("wild_type") else False,
-                                True if snp.get("mutation") else False,
-                                0,
-                                "now",
-                            ],
-                        }
-                    )
-        if seq.get("publications"):
-            for ref in seq.get("publications"):
-                inserts.append(
-                    {
-                        "qry": "INSERT INTO sequence_refs "
-                        "(locus,allele_id,pubmed_id,curator,datestamp) VALUES "
-                        "(%s,%s,%s,%s,%s)",
+                        "qry": "INSERT INTO sequences_peptide_mutations "
+                        "(locus,allele_id,mutation_id,amino_acid,is_wild_type,"
+                        "is_mutation,curator,datestamp) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                         "values": [
                             locus,
                             seq.get("allele_id"),
-                            ref.get("pubmed_id"),
+                            sav_id,
+                            sav.get("amino_acid"),
+                            True if sav.get("wild_type") else False,
+                            True if sav.get("mutation") else False,
                             0,
                             "now",
                         ],
                     }
                 )
-        if seq.get("accessions"):
-            for accession in seq.get("accessions"):
+    if seq.get("SNPs"):
+        for snp in seq.get("SNPs"):
+            snp_ids = config.script.datastore.run_query(
+                "SELECT id FROM dna_mutations WHERE (locus,reported_position)=(%s,%s)",
+                [locus, snp.get("position")],
+                {"fetch": "col_arrayref"},
+            )
+            for snp_id in snp_ids:
                 inserts.append(
                     {
-                        "qry": "INSERT INTO accession "
-                        "(locus,allele_id,databank,databank_id,curator,datestamp) VALUES "
-                        "(%s,%s,%s,%s,%s,%s)",
+                        "qry": "INSERT INTO sequences_dna_mutations "
+                        "(locus,allele_id,mutation_id,nucleotide,is_wild_type,"
+                        "is_mutation,curator,datestamp) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                         "values": [
                             locus,
                             seq.get("allele_id"),
-                            accession.get("databank"),
-                            accession.get("accession"),
+                            snp_id,
+                            snp.get("nucleotide"),
+                            True if snp.get("wild_type") else False,
+                            True if snp.get("mutation") else False,
                             0,
                             "now",
                         ],
                     }
                 )
-        try:
-            with db.cursor() as cursor:
-                for insert in inserts:
-                    cursor.execute(insert.get("qry"), insert.get("values"))
-            db.commit()
-            config.script.logger.info(f"Locus {locus}-{seq.get('allele_id')} added.")
-        except Exception as e:
-            db.rollback()
-            raise DBError(
-                f"INSERT failed adding sequence {locus}-{seq.get('allele_id')}: {e}"
-            ) from e
+    if seq.get("publications"):
+        for ref in seq.get("publications"):
+            inserts.append(
+                {
+                    "qry": "INSERT INTO sequence_refs "
+                    "(locus,allele_id,pubmed_id,curator,datestamp) VALUES "
+                    "(%s,%s,%s,%s,%s)",
+                    "values": [
+                        locus,
+                        seq.get("allele_id"),
+                        ref.get("pubmed_id"),
+                        0,
+                        "now",
+                    ],
+                }
+            )
+    if seq.get("accessions"):
+        for accession in seq.get("accessions"):
+            inserts.append(
+                {
+                    "qry": "INSERT INTO accession "
+                    "(locus,allele_id,databank,databank_id,curator,datestamp) VALUES "
+                    "(%s,%s,%s,%s,%s,%s)",
+                    "values": [
+                        locus,
+                        seq.get("allele_id"),
+                        accession.get("databank"),
+                        accession.get("accession"),
+                        0,
+                        "now",
+                    ],
+                }
+            )
+    try:
+        with db.cursor() as cursor:
+            for insert in inserts:
+                cursor.execute(insert.get("qry"), insert.get("values"))
+        db.commit()
+        config.script.logger.info(f"Locus {locus}-{seq.get('allele_id')} added.")
+    except Exception as e:
+        db.rollback()
+        raise DBError(
+            f"INSERT failed adding sequence {locus}-{seq.get('allele_id')}: {e}"
+        ) from e
 
 
 def update_seqdef():
@@ -616,5 +638,4 @@ def update_seqdef():
             local_set = set(local_loci)
             local_loci = [locus for locus in remote_loci if locus in local_set]
 
-        if config.args.add_new_seqs:
-            add_or_check_new_seqs(local_loci)
+        add_or_check_new_seqs(local_loci)
