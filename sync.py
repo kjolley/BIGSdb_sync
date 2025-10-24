@@ -480,6 +480,39 @@ def add_new_seqs(loci: List[str]):
                                             ],
                                         }
                                     )
+                        if seq.get("publications"):
+                            for ref in seq.get("publications"):
+                                inserts.append(
+                                    {
+                                        "qry": "INSERT INTO sequence_refs "
+                                        "(locus,allele_id,pubmed_id,curator,datestamp) VALUES "
+                                        "(%s,%s,%s,%s,%s)",
+                                        "values": [
+                                            locus,
+                                            seq.get("allele_id"),
+                                            ref.get("pubmed_id"),
+                                            0,
+                                            "now",
+                                        ],
+                                    }
+                                )
+                        if seq.get("accessions"):
+                            for accession in seq.get("accessions"):
+                                inserts.append(
+                                    {
+                                        "qry": "INSERT INTO accession "
+                                        "(locus,allele_id,databank,databank_id,curator,datestamp) VALUES "
+                                        "(%s,%s,%s,%s,%s,%s)",
+                                        "values": [
+                                            locus,
+                                            seq.get("allele_id"),
+                                            accession.get("databank"),
+                                            accession.get("accession"),
+                                            0,
+                                            "now",
+                                        ],
+                                    }
+                                )
                         try:
                             for insert in inserts:
                                 cursor.execute(insert.get("qry"), insert.get("values"))
