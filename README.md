@@ -100,7 +100,7 @@ scheme ids, e.g.
 ```
 
 ## Adding new alleles
-Use the `add_new_seqs` argument to retrieve and add new alleles to the local
+Use the `--add_new_seqs` argument to retrieve and add new alleles to the local
 database. You can use the `--loci` and `--schemes` filters to restrict the 
 loci to update. You can also limit the update to only those modified in the 
 last X days using the `--reldate` argument, e.g.
