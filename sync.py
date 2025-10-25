@@ -20,6 +20,7 @@ from typing import List, Optional
 
 import config
 from api_client import get_route
+from datetime import datetime
 from utils import (
     extract_last_value_from_url,
     extract_locus_names_from_urls,
@@ -435,14 +436,57 @@ def check_record_users(record, user_ids):
 
 def check_seq(locus, seq, user_ids, extended_att, savs, snps):
     db = config.script.db
+    seq_fields = [
+        "allele_id",
+        "sequence",
+        "status",
+        "comments",
+        "type_allele",
+        "sender",
+        "curator",
+        "date_entered",
+        "datestamp",
+    ]
     sender, curator = check_record_users(seq, user_ids)
+    seq_copy = seq.copy()
+    seq_copy["sender"] = sender
+    seq_copy["curator"] = curator
+
     local_record = config.script.datastore.run_query(
         "SELECT * FROM sequences WHERE (locus,allele_id)=(?,?)",
-        [locus, seq.get("allele_id")],
+        [locus, seq_copy.get("allele_id")],
         {"fetch": "row_hashref"},
     )
-    raise ConfigError("--check_seq not implemented yet.")
-    print(local_record)
+    config.script.logger.debug(f"Checking {locus}-{seq.get('allele_id')}.")
+
+    different_fields = []
+
+    for field in seq_fields:
+        if field in ["date_entered", "datestamp"]:
+            local_record[field] = local_record.get(field).isoformat()
+        if seq_copy.get(field) != local_record.get(field):
+            different_fields.append(field)
+    if len(different_fields) > 0:
+        config.script.logger.info(
+            f"{locus}-{seq.get('allele_id')} has changed (fields: {different_fields})."
+        )
+        delete_seq(locus, seq_copy.get("allele_id"))
+        config.script.logger.info(f"Deleted {locus}-{seq.get('allele_id')}.")
+        add_new_seq(locus, seq, user_ids, extended_att, savs, snps)
+
+
+def delete_seq(locus, allele_id):
+    db = config.script.db
+    try:
+        with db.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM sequences WHERE (locus,allele_id)=(%s,%s)",
+                [locus, allele_id],
+            )
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        raise DBError(f"Failed to delete {locus}-{allele_id}: {e}") from e
 
 
 def add_new_seq(locus, seq, user_ids, extended_att, savs, snps):
