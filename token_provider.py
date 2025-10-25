@@ -58,6 +58,9 @@ class TokenProvider:
 
     def _write_to_disk(self, token, secret):
         file_path = self._token_file()
+        if token == None or secret == None:
+            file_path.unlink(missing_ok=True)
+            return
         config = configparser.ConfigParser(interpolation=None)
         if file_path.is_file():
             config.read(file_path)

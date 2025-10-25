@@ -391,7 +391,7 @@ def add_or_check_new_seqs(loci: List[str]):
                                 savs=savs,
                                 snps=snps,
                             )
-                    else:
+                    elif config.args.add_new_seqs:
                         add_new_seq(
                             locus=locus,
                             seq=seq,

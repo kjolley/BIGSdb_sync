@@ -138,8 +138,8 @@ def get_new_session_token():
         if config.args.cron:
             config.script.logger.error("Run interactively to fix.")
         if re.search("verification", msg) or re.search("Invalid access token", msg):
-            config.script.logger.error("New access token required - removing old one.")
             config.access_provider.set(None, None)
+            raise AuthError("New access token required - removing old one.")
         raise AuthError(f"Failed to get new session token: {msg}")
 
 
