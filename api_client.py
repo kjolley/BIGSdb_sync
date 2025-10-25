@@ -50,6 +50,7 @@ def trim_url_args(url):
 
 
 def get_route(url, token_provider, method="GET", json_body=None):
+    config.script.logger.debug(f"URL: {url}")
     if json_body is None:
         json_body = {}
     (client_key, client_secret) = get_client_credentials()

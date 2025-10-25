@@ -351,6 +351,8 @@ def add_or_check_new_seqs(loci: List[str]):
                 {"fetch": "all_arrayref", "slice": {}},
             )
         local_allele_ids = {seq["allele_id"] for seq in local_seqs}
+        if not config.args.add_new_seqs and len(local_allele_ids) == 0:
+            continue
 
         url = f"{config.args.api_db_url}/loci/{locus}/alleles?include_records=1"
         if config.args.reldate is not None:
@@ -610,12 +612,14 @@ def update_seqdef():
         not_in_local = [x for x in remote_loci if x not in local_loci]
         if len(not_in_local):
             if len(not_in_local) > 20:
-                if config.args.log_level != "DEBUG":
+                if config.args.verbose:
+                    config.script.logger.info(f"Not defined in local: {not_in_local}")
+                else:
                     config.script.logger.info(
                         f"There are {len(not_in_local)} loci not defined in local. "
-                        "Run with --log_level DEBUG to list these."
+                        "Run with --verbose to list these."
                     )
-                config.script.logger.debug(f"Not defined in local: {not_in_local}")
+
             else:
                 config.script.logger.info(f"Not defined in local: {not_in_local}")
             if config.args.add_new_loci:

@@ -95,6 +95,9 @@ def parse_args():
         help="Directory into which keys and tokens will be saved.",
     )
     parser.add_argument(
+        "--verbose", action="store_true", help="Provide more detailed output."
+    )
+    parser.add_argument(
         "--update_seqs",
         action="store_true",
         help="Update sequence attributes if they have changed.",
