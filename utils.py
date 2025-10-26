@@ -80,6 +80,12 @@ def parse_args():
         help="Log level.",
     )
     parser.add_argument(
+        "--page_size",
+        required=False,
+        type=int_in_range(10, 1000),
+        help="Size of page to request from API. Default is to leave it up to the API. ",
+    )
+    parser.add_argument(
         "--reldate",
         required=False,
         type=int,
@@ -262,3 +268,15 @@ def check_api_dns(api_url, retries=0, backoff=2):
                 f"Unexpected error resolving host '{host}': {e}", file=sys.stderr
             )
             return False
+
+
+def int_in_range(min_val, max_val):
+    def checker(value):
+        ivalue = int(value)
+        if ivalue < min_val or ivalue > max_val:
+            raise argparse.ArgumentTypeError(
+                f"{value} not in range {min_val}–{max_val}"
+            )
+        return ivalue
+
+    return checker

@@ -356,8 +356,11 @@ def add_or_check_new_seqs(loci: List[str]):
             continue
 
         url = f"{config.args.api_db_url}/loci/{locus}/alleles?include_records=1"
+
         if config.args.reldate is not None:
             url += f"&updated_reldate={config.args.reldate}"
+        if config.args.page_size is not None:
+            url += f"&page_size={config.args.page_size}"
         extended_att = config.script.datastore.run_query(
             "SELECT * FROM locus_extended_attributes WHERE locus=?",
             locus,
@@ -435,6 +438,7 @@ def check_record_users(record, user_ids):
 
 
 def check_seq(locus, seq, user_ids, extended_att, savs, snps):
+    ext_fields = [ea["field"] for ea in extended_att]
     db = config.script.db
     seq_fields = [
         "allele_id",
@@ -466,10 +470,39 @@ def check_seq(locus, seq, user_ids, extended_att, savs, snps):
             local_record[field] = local_record.get(field).isoformat()
         if seq_copy.get(field) != local_record.get(field):
             different_fields.append(field)
+
+    is_different = False
     if len(different_fields) > 0:
+
         config.script.logger.info(
             f"{locus}-{seq.get('allele_id')} has changed (fields: {different_fields})."
         )
+        is_different = True
+    if not is_different and extended_att:
+        local_ext_values = config.script.datastore.run_query(
+            "SELECT field,value FROM sequence_extended_attributes WHERE (locus,allele_id)=(%s,%s)",
+            [locus, seq.get("allele_id")],
+            {"fetch": "all_arrayref", "slice": {}},
+        )
+        local = {}
+        remote = {}
+        for ext in local_ext_values:
+
+            local[ext.get("field")] = ext.get("value")
+        for field in ext_fields:
+            if seq.get(field):
+                remote[field] = seq.get(field)
+        if local != remote:
+
+            for field in ext_fields:
+                if local.get(field) != remote.get(field):
+                    different_fields.append(field)
+            config.script.logger.info(
+                f"{locus}-{seq.get('allele_id')} extended attributes have changed (fields: {different_fields})."
+            )
+            is_different = True
+    # TODO SAVs, SNPs, publications, accessions
+    if is_different and config.args.update_seqs:
         delete_seq(locus, seq_copy.get("allele_id"))
         config.script.logger.info(f"Deleted {locus}-{seq.get('allele_id')}.")
         add_new_seq(locus, seq, user_ids, extended_att, savs, snps)
@@ -648,30 +681,30 @@ def update_seqdef():
     local_loci = get_local_locus_list()
     remote_count = len(remote_loci)
     local_count = len(local_loci)
-    if remote_count != local_count:
-        filtered = " (filtered)" if selected_loci or selected_schemes else ""
-        config.script.logger.debug(
-            f"Remote loci{filtered}: {remote_count}; Local loci: {local_count}"
-        )
-        not_in_local = [x for x in remote_loci if x not in local_loci]
-        if len(not_in_local):
-            if len(not_in_local) > 20:
-                if config.args.verbose:
-                    config.script.logger.info(f"Not defined in local: {not_in_local}")
-                else:
-                    config.script.logger.info(
-                        f"There are {len(not_in_local)} loci not defined in local. "
-                        "Run with --verbose to list these."
-                    )
+    filtered = " (filtered)" if selected_loci or selected_schemes else ""
+    config.script.logger.debug(
+        f"Remote loci{filtered}: {remote_count}; Local loci: {local_count}"
+    )
+    not_in_local = [x for x in remote_loci if x not in local_loci]
 
-            else:
+    if len(not_in_local):
+        if len(not_in_local) > 20:
+            if config.args.verbose:
                 config.script.logger.info(f"Not defined in local: {not_in_local}")
-            if config.args.add_new_loci:
-                add_new_loci(not_in_local)
             else:
                 config.script.logger.info(
-                    "Run with --add_new_loci to define these locally."
+                    f"There are {len(not_in_local)} loci not defined in local. "
+                    "Run with --verbose to list these."
                 )
+
+        else:
+            config.script.logger.info(f"Not defined in local: {not_in_local}")
+        if config.args.add_new_loci:
+            add_new_loci(not_in_local)
+        else:
+            config.script.logger.info(
+                "Run with --add_new_loci to define these locally."
+            )
 
     if config.args.add_new_seqs or config.args.check_seqs or config.args.update_seqs:
         local_loci = get_local_locus_list(schemes=selected_schemes, loci=selected_loci)
