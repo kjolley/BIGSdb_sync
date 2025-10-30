@@ -27,7 +27,7 @@ from utils import (
     check_api_dns,
 )
 from token_provider import TokenProvider
-from auth import get_new_session_token
+from auth import get_new_session_token, get_new_access_token
 import sync
 import traceback
 from errors import BIGSdbSyncError, ConfigError, AuthError, APIError, DBError
@@ -55,6 +55,9 @@ def main():
         config.access_provider = TokenProvider(
             config.args.token_dir, config.args.key_name, token_type="access"
         )
+        access_token, access_secret = config.access_provider.get()
+        if not config.args.cron and (access_token == None or access_secret == None):
+            get_new_access_token()
 
         token, secret = config.session_provider.get()
         if not token or not secret:

@@ -58,13 +58,13 @@ class TokenProvider:
 
     def _write_to_disk(self, token, secret):
         file_path = self._token_file()
-        if token == None or secret == None:
-            file_path.unlink(missing_ok=True)
-            return
         config = configparser.ConfigParser(interpolation=None)
         if file_path.is_file():
             config.read(file_path)
-        config[self.key_name] = {"token": token, "secret": secret}
+        if token == None or secret == None:
+            config.remove_section(self.key_name)
+        else:
+            config[self.key_name] = {"token": token, "secret": secret}
         with open(file_path, "w") as fh:
             config.write(fh)
         os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
