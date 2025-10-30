@@ -21,6 +21,7 @@ from typing import List, Optional
 import config
 from api_client import get_route
 from datetime import datetime
+from collections import Counter
 from utils import (
     extract_last_value_from_url,
     extract_locus_names_from_urls,
@@ -439,6 +440,7 @@ def check_record_users(record, user_ids):
 
 def check_seq(locus, seq, user_ids, extended_att, savs, snps):
     ext_fields = [ea["field"] for ea in extended_att]
+    allele_id = seq.get("allele_id")
     db = config.script.db
     seq_fields = [
         "allele_id",
@@ -458,10 +460,10 @@ def check_seq(locus, seq, user_ids, extended_att, savs, snps):
 
     local_record = config.script.datastore.run_query(
         "SELECT * FROM sequences WHERE (locus,allele_id)=(?,?)",
-        [locus, seq_copy.get("allele_id")],
+        [locus, allele_id],
         {"fetch": "row_hashref"},
     )
-    config.script.logger.debug(f"Checking {locus}-{seq.get('allele_id')}.")
+    config.script.logger.debug(f"Checking {locus}-{allele_id}.")
 
     different_fields = []
 
@@ -475,13 +477,13 @@ def check_seq(locus, seq, user_ids, extended_att, savs, snps):
     if len(different_fields) > 0:
 
         config.script.logger.info(
-            f"{locus}-{seq.get('allele_id')} has changed (fields: {different_fields})."
+            f"{locus}-{allele_id} has changed (fields: {different_fields})."
         )
         is_different = True
     if not is_different and extended_att:
         local_ext_values = config.script.datastore.run_query(
             "SELECT field,value FROM sequence_extended_attributes WHERE (locus,allele_id)=(%s,%s)",
-            [locus, seq.get("allele_id")],
+            [locus, allele_id],
             {"fetch": "all_arrayref", "slice": {}},
         )
         local = {}
@@ -498,13 +500,35 @@ def check_seq(locus, seq, user_ids, extended_att, savs, snps):
                 if local.get(field) != remote.get(field):
                     different_fields.append(field)
             config.script.logger.info(
-                f"{locus}-{seq.get('allele_id')} extended attributes have changed (fields: {different_fields})."
+                f"{locus}-{allele_id} extended attributes have changed (fields: {different_fields})."
             )
             is_different = True
-    # TODO SAVs, SNPs, publications, accessions
+    if not is_different and seq.get("publications"):
+        local_refs = config.script.datastore.run_query(
+            "SELECT pubmed_id FROM sequence_refs WHERE (locus,allele_id)=(%s,%s)",
+            [locus, allele_id],
+            {"fetch": "col_arrayref"},
+        )
+        remote_refs = {ref["pubmed_id"] for ref in seq.get("publications")}
+        if Counter(local_refs) != Counter(remote_refs):
+            config.script.logger.info(f"{locus}-{allele_id} publications have changed.")
+            is_different = True
+    if not is_different and seq.get("accessions"):
+        local_accessions = config.script.datastore.run_query(
+            "SELECT databank,databank_id AS accession FROM accession WHERE (locus,allele_id)=(%s,%s)",
+            [locus, allele_id],
+            {"fetch": "all_arrayref", "slice": {}},
+        )
+        remote_accessions = seq.get("accessions")
+        if {tuple(sorted(d.items())) for d in local_accessions} != {
+            tuple(sorted(d.items())) for d in remote_accessions
+        }:
+            config.script.logger.info(f"{locus}-{allele_id} accessions have changed.")
+            is_different = True
+    # TODO SAVs, SNPs
     if is_different and config.args.update_seqs:
-        delete_seq(locus, seq_copy.get("allele_id"))
-        config.script.logger.info(f"Deleted {locus}-{seq.get('allele_id')}.")
+        delete_seq(locus, allele_id)
+        config.script.logger.info(f"Deleted {locus}-{allele_id}.")
         add_new_seq(locus, seq, user_ids, extended_att, savs, snps)
 
 
