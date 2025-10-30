@@ -33,12 +33,12 @@ from errors import ConfigError
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--add_new_loci",
+        "--add_loci",
         action="store_true",
         help="Set up new loci if they do not exist in local database.",
     )
     parser.add_argument(
-        "--add_new_seqs", action="store_true", help="Add new allele/variant sequences."
+        "--add_seqs", action="store_true", help="Add new allele/variant sequences."
     )
     parser.add_argument(
         "--api_db_url",

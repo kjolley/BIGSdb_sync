@@ -146,7 +146,7 @@ def get_local_locus_list(
         raise DBError(f"Failed to build local locus list: {e}") from e
 
 
-def add_new_loci(loci: List[str]):
+def add_loci(loci: List[str]):
     db = config.script.db
 
     for locus in loci:
@@ -352,7 +352,7 @@ def add_or_check_new_seqs(loci: List[str]):
                 {"fetch": "all_arrayref", "slice": {}},
             )
         local_allele_ids = {seq["allele_id"] for seq in local_seqs}
-        if not config.args.add_new_seqs and len(local_allele_ids) == 0:
+        if not config.args.add_seqs and len(local_allele_ids) == 0:
             continue
 
         url = f"{config.args.api_db_url}/loci/{locus}/alleles?include_records=1"
@@ -397,7 +397,7 @@ def add_or_check_new_seqs(loci: List[str]):
                                 savs=savs,
                                 snps=snps,
                             )
-                    elif config.args.add_new_seqs:
+                    elif config.args.add_seqs:
                         add_new_seq(
                             locus=locus,
                             seq=seq,
@@ -699,14 +699,12 @@ def update_seqdef():
 
         else:
             config.script.logger.info(f"Not defined in local: {not_in_local}")
-        if config.args.add_new_loci:
-            add_new_loci(not_in_local)
+        if config.args.add_loci:
+            add_loci(not_in_local)
         else:
-            config.script.logger.info(
-                "Run with --add_new_loci to define these locally."
-            )
+            config.script.logger.info("Run with --add_loci to define these locally.")
 
-    if config.args.add_new_seqs or config.args.check_seqs or config.args.update_seqs:
+    if config.args.add_seqs or config.args.check_seqs or config.args.update_seqs:
         local_loci = get_local_locus_list(schemes=selected_schemes, loci=selected_loci)
         if config.args.reldate is not None:
             updated_remote_locus_urls = get_route(
