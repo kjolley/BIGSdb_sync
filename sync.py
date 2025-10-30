@@ -525,7 +525,35 @@ def check_seq(locus, seq, user_ids, extended_att, savs, snps):
         }:
             config.script.logger.info(f"{locus}-{allele_id} accessions have changed.")
             is_different = True
-    # TODO SAVs, SNPs
+    if not is_different and seq.get("SAVs"):
+        local_savs = config.script.datastore.run_query(
+            "SELECT reported_position AS position,amino_acid,is_wild_type AS wild_type,"
+            "is_mutation AS mutation FROM peptide_mutations pm JOIN sequences_peptide_mutations s "
+            "ON pm.id=s.mutation_id WHERE (s.locus,s.allele_id)=(?,?)",
+            [locus, allele_id],
+            {"fetch": "all_arrayref", "slice": {}},
+        )
+        remote_savs = seq.get("SAVs")
+        if {tuple(sorted(d.items())) for d in local_savs} != {
+            tuple(sorted(d.items())) for d in remote_savs
+        }:
+            config.script.logger.info(f"{locus}-{allele_id} SAVs have changed.")
+            is_different = True
+    if not is_different and seq.get("SNPs"):
+        local_snps = config.script.datastore.run_query(
+            "SELECT reported_position AS position,nucleotide,is_wild_type AS wild_type,"
+            "is_mutation AS mutation FROM dna_mutations pm JOIN sequences_dna_mutations s "
+            "ON pm.id=s.mutation_id WHERE (s.locus,s.allele_id)=(?,?)",
+            [locus, allele_id],
+            {"fetch": "all_arrayref", "slice": {}},
+        )
+        remote_snps = seq.get("SNPs")
+        if {tuple(sorted(d.items())) for d in local_snps} != {
+            tuple(sorted(d.items())) for d in remote_snps
+        }:
+            config.script.logger.info(f"{locus}-{allele_id} SNPs have changed.")
+            is_different = True
+    # Easier to just delete and re-add records than try to determine exactly what to update.
     if is_different and config.args.update_seqs:
         delete_seq(locus, allele_id)
         config.script.logger.info(f"Deleted {locus}-{allele_id}.")
