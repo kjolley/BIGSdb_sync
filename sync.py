@@ -122,6 +122,41 @@ def get_remote_locus_list(schemes: Optional[List[int]], loci: Optional[List[str]
     return locus_urls
 
 
+def get_remote_scheme_list(schemes: Optional[List[int]] = None):
+    scheme_list = get_route(
+        f"{config.args.api_db_url}/schemes",
+        config.session_provider,
+    )
+
+    schemes_set = set(schemes) if schemes else None
+    filtered = []
+    for scheme in scheme_list.get("schemes"):
+        scheme_id = int(extract_last_value_from_url(scheme.get("scheme")))
+        if schemes:
+            if scheme_id in schemes_set:
+                filtered.append(scheme_id)
+        else:
+            filtered.append(scheme_id)
+    return filtered
+
+
+def get_local_scheme_list(schemes: Optional[List[int]] = None):
+    scheme_list = []
+    try:
+        local_schemes = config.script.datastore.run_query(
+            "SELECT id FROM schemes ORDER BY id", None, {"fetch": "col_arrayref"}
+        )
+        if schemes:
+            scheme_set = set(schemes)
+            for scheme_id in local_schemes:
+                if scheme_id in scheme_set:
+                    scheme_list.append(scheme_id)
+            return scheme_list
+        return local_schemes
+    except Exception as e:
+        raise DBError(f"Failed to build local scheme list: {e}") from e
+
+
 def get_local_locus_list(
     schemes: Optional[List[int]] = None, loci: Optional[List[str]] = None
 ):
@@ -145,6 +180,110 @@ def get_local_locus_list(
         return locus_list
     except Exception as e:
         raise DBError(f"Failed to build local locus list: {e}") from e
+
+
+def add_schemes(schemes: List[int]):
+    db = config.script.db
+    for scheme_id in sorted(schemes):
+        local_scheme = config.script.datastore.get_scheme(scheme_id)
+        if local_scheme is not None:
+            raise DBError(f"Local scheme {scheme_id} already exists!")
+        url = f"{config.args.api_db_url}/schemes/{scheme_id}"
+        scheme_info = get_route(url, config.session_provider)
+        possible_fields = [
+            "id",
+            "description",
+            "allow_missing_loci",
+            "allow_presence",
+            "max_missing",
+            "display_order",
+        ]
+        mapped_field = {"description": "name"}
+        fields = []
+        placeholders = []
+        values = []
+        for field in possible_fields:
+            if scheme_info.get(field) is None:
+                continue
+            fields.append(mapped_field.get(field) or field)
+            values.append(scheme_info.get(field))
+            placeholders.append("%s")
+        fields.extend(["curator", "date_entered", "datestamp"])
+        placeholders.extend(["%s", "%s", "%s"])
+        values.extend([0, "now", "now"])
+        inserts = []
+        qry = (
+            "INSERT INTO schemes ("
+            + ",".join(fields)
+            + ") VALUES ("
+            + ",".join(placeholders)
+            + ")"
+        )
+        inserts.append({"qry": qry, "values": values})
+        locus_urls = scheme_info.get("loci")
+        if locus_urls:
+            local_loci = get_local_locus_list()
+            local_loci_set = set(local_loci)
+            loci = extract_locus_names_from_urls(locus_urls)
+            order = 0
+            for locus in loci:
+                order += 1
+                if locus not in local_loci_set:
+                    add_loci([locus])
+                inserts.append(
+                    {
+                        "qry": "INSERT INTO scheme_members(scheme_id,locus,field_order,curator,datestamp) VALUES (%s,%s,%s,%s,%s)",
+                        "values": [
+                            scheme_id,
+                            locus,
+                            order,
+                            0,
+                            "now",
+                        ],
+                    }
+                )
+        scheme_fields = scheme_info.get("fields")
+        if scheme_fields:
+            for scheme_field_url in scheme_fields:
+                field_info = get_route(scheme_field_url, config.session_provider)
+                inserts.append(
+                    {
+                        "qry": "INSERT INTO scheme_fields(scheme_id,field,type,value_regex,description,"
+                        "option_list,field_order,index,dropdown,primary_key,curator,datestamp) VALUES "
+                        "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        "values": [
+                            scheme_id,
+                            field_info.get("field"),
+                            field_info.get("type"),
+                            field_info.get("value_regex"),
+                            field_info.get("description"),
+                            field_info.get("option_list"),
+                            field_info.get("field_order"),
+                            field_info.get("index"),
+                            field_info.get("dropdown"),
+                            field_info.get("primary_key"),
+                            0,
+                            "now",
+                        ],
+                    }
+                )
+        try:
+            with db.cursor() as cursor:
+                for insert in inserts:
+                    cursor.execute(insert.get("qry"), insert.get("values", []))
+            db.commit()
+
+            config.script.logger.info(
+                f"Scheme {scheme_id} ({scheme_info.get('description')}) added."
+            )
+        except Exception as e:
+            db.rollback()
+            if "already exists" in str(e):
+                config.script.logger.warning(
+                    f"Scheme {scheme_id} already exists. Skipped."
+                )
+                continue
+            raise DBError(f"INSERT failed adding scheme {scheme_id}: {e}") from e
 
 
 def add_loci(loci: List[str]):
@@ -722,20 +861,52 @@ def update_seqdef():
             )
         except ValueError:
             raise ConfigError("Invalid non-integer value found in --schemes argument.")
-    if config.args.loci:
-        selected_loci = sorted({locus.strip() for locus in config.args.loci.split(",")})
 
-    remote_locus_urls = get_remote_locus_list(
-        schemes=selected_schemes, loci=selected_loci
-    )
+    if config.args.add_schemes:
+        check_schemes(schemes=selected_schemes)
+
+    if config.args.add_seqs or config.args.check_seqs or config.args.update_seqs:
+        if config.args.loci:
+            selected_loci = sorted(
+                {locus.strip() for locus in config.args.loci.split(",")}
+            )
+        check_loci(schemes=selected_schemes, loci=selected_loci)
+        update_seqs(schemes=selected_schemes, loci=selected_loci)
+
+
+def check_schemes(schemes: Optional[List[int]] = None):
+    remote_schemes = get_remote_scheme_list(schemes=schemes)
+    local_schemes = get_local_scheme_list(schemes=schemes)
+    scheme_not_in_local = [x for x in remote_schemes if x not in local_schemes]
+    if len(scheme_not_in_local):
+        if len(scheme_not_in_local) > 20:
+            if config.args.verbose:
+                config.script.logger.info(
+                    f"Schemes not defined in local: {sorted(scheme_not_in_local)}"
+                )
+            else:
+                config.script.logger.info(
+                    f"There are {len(scheme_not_in_local)} schemes not defined in local. "
+                    "Run with --verbose to list these."
+                )
+
+        else:
+            config.script.logger.info(
+                f"Schemes not defined in local: {sorted(scheme_not_in_local)}"
+            )
+        add_schemes(scheme_not_in_local)
+
+
+def check_loci(schemes: Optional[List[int]] = None, loci: Optional[List[str]] = None):
+    remote_locus_urls = get_remote_locus_list(schemes=schemes, loci=loci)
     remote_loci = extract_locus_names_from_urls(remote_locus_urls)
 
     local_loci = get_local_locus_list()
-    remote_count = len(remote_loci)
-    local_count = len(local_loci)
-    filtered = " (filtered)" if selected_loci or selected_schemes else ""
+    remote_locus_count = len(remote_loci)
+    local_locus_count = len(local_loci)
+    filtered = " (filtered)" if loci or schemes else ""
     config.script.logger.debug(
-        f"Remote loci{filtered}: {remote_count}; Local loci: {local_count}"
+        f"Remote loci{filtered}: {remote_locus_count}; Local loci: {local_locus_count}"
     )
     not_in_local = [x for x in remote_loci if x not in local_loci]
 
@@ -756,17 +927,19 @@ def update_seqdef():
         else:
             config.script.logger.info("Run with --add_loci to define these locally.")
 
-    if config.args.add_seqs or config.args.check_seqs or config.args.update_seqs:
-        local_loci = get_local_locus_list(schemes=selected_schemes, loci=selected_loci)
-        if config.args.reldate is not None:
-            updated_remote_locus_urls = get_route(
-                f"{config.args.api_db_url}/loci?return_all=1&alleles_updated_reldate={config.args.reldate}",
-                config.session_provider,
-            )
-            remote_loci = extract_locus_names_from_urls(
-                updated_remote_locus_urls.get("loci", [])
-            )
-            local_set = set(local_loci)
-            local_loci = [locus for locus in remote_loci if locus in local_set]
 
-        add_or_check_new_seqs(local_loci)
+def update_seqs(schemes: Optional[List[int]] = None, loci: Optional[List[str]] = None):
+
+    local_loci = get_local_locus_list(schemes=schemes, loci=loci)
+    if config.args.reldate is not None:
+        updated_remote_locus_urls = get_route(
+            f"{config.args.api_db_url}/loci?return_all=1&alleles_updated_reldate={config.args.reldate}",
+            config.session_provider,
+        )
+        remote_loci = extract_locus_names_from_urls(
+            updated_remote_locus_urls.get("loci", [])
+        )
+        local_set = set(local_loci)
+        local_loci = [locus for locus in remote_loci if locus in local_set]
+
+    add_or_check_new_seqs(local_loci)

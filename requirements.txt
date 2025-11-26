@@ -1,4 +1,4 @@
-bigsdb==0.0.8
+bigsdb==0.0.9
 certifi==2025.8.3
 charset-normalizer==3.4.3
 idna==3.10

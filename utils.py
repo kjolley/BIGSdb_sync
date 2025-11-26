@@ -36,7 +36,8 @@ def parse_args():
         "--add_loci",
         action="store_true",
         help="Set up new loci if they do not exist in local database.",
-    )
+    ),
+    parser.add_argument("--add_schemes", action="store_true", help="Add new schemes"),
     parser.add_argument(
         "--add_seqs", action="store_true", help="Add new allele/variant sequences."
     )
