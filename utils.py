@@ -37,6 +37,7 @@ def parse_args():
         action="store_true",
         help="Set up new loci if they do not exist in local database.",
     ),
+    parser.add_argument("--add_profiles", action="store_true", help="Add new profiles"),
     parser.add_argument("--add_schemes", action="store_true", help="Add new schemes"),
     parser.add_argument(
         "--add_seqs", action="store_true", help="Add new allele/variant sequences."
@@ -50,6 +51,11 @@ def parse_args():
         "--base_web_url",
         required=False,
         help="URL to BIGSdb script on target web site.",
+    ),
+    parser.add_argument(
+        "--check_profiles",
+        action="store_true",
+        help="Warn of changes to existing profiles.",
     )
     parser.add_argument(
         "--check_seqs",
@@ -103,6 +109,11 @@ def parse_args():
     )
     parser.add_argument(
         "--verbose", action="store_true", help="Provide more detailed output."
+    ),
+    parser.add_argument(
+        "--update_profiles",
+        action="store_true",
+        help="Update profiles or their attributes if they have changed.",
     )
     parser.add_argument(
         "--update_seqs",

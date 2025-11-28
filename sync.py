@@ -473,6 +473,12 @@ def should_check_existing_alleles():
     return False
 
 
+def should_check_existing_profiles():
+    if config.args.check_profiles or config.args.update_profiles:
+        return True
+    return False
+
+
 def add_or_check_new_seqs(loci: List[str]):
     users = get_local_users()
     user_ids = {user["id"] for user in users}
@@ -557,6 +563,43 @@ def add_or_check_new_seqs(loci: List[str]):
                     break
             else:
                 break
+
+
+def add_or_check_new_profiles(schemes: List[int]):
+    users = get_local_users()
+    user_ids = {user["id"] for user in users}
+    should_check_existing = should_check_existing_profiles()
+    for scheme_id in schemes:
+        scheme_info = config.script.datastore.get_scheme_info(
+            scheme_id, {"get_pk": True}
+        )
+        pk = scheme_info.get("primary_key")
+        if pk is None:
+            config.script.logger.debug(
+                f"Scheme {scheme_id} has no primary key - skipping."
+            )
+            continue
+        pk_field_info = config.script.datastore.get_scheme_field_info(scheme_id, pk)
+        order = f"CAST({pk} AS int)" if pk_field_info.get("type") == "integer" else "pk"
+        scheme_table = f"mv_scheme_{scheme_id}"
+        if config.args.check_profiles or config.args.update_profiles:
+            local_profiles = config.script.datastore.run_query(
+                f"SELECT * FROM {scheme_table} ORDER BY {order}",
+                None,
+                {"fetch": "all_arrayref", "slice": {}},
+            )
+        else:
+            local_profiles = config.script.datastore.run_query(
+                f"SELECT {pk} FROM {scheme_table} ORDER BY {order}",
+                None,
+                {"fetch": "all_arrayref", "slice": {}},
+            )
+        local_profile_ids = {profile[pk] for profile in local_profiles}
+        if not config.args.add_profiles and len(local_profile_ids) == 0:
+            continue
+        url = f"{config.args.api_db_url}/schemes/{scheme_id}/profiles?include_records=1"
+        # The include_records attribute has not yet been implemented in the API.
+        print(url)
 
 
 def check_record_users(record, user_ids):
@@ -873,6 +916,14 @@ def update_seqdef():
         check_loci(schemes=selected_schemes, loci=selected_loci)
         update_seqs(schemes=selected_schemes, loci=selected_loci)
 
+    if (
+        config.args.add_profiles
+        or config.args.check_profiles
+        or config.args.update_profiles
+    ):
+        check_schemes(schemes=selected_schemes)
+        update_profiles(schemes=selected_schemes)
+
 
 def check_schemes(schemes: Optional[List[int]] = None):
     remote_schemes = get_remote_scheme_list(schemes=schemes)
@@ -943,3 +994,8 @@ def update_seqs(schemes: Optional[List[int]] = None, loci: Optional[List[str]] =
         local_loci = [locus for locus in remote_loci if locus in local_set]
 
     add_or_check_new_seqs(local_loci)
+
+
+def update_profiles(schemes: Optional[List[int]] = None):
+    local_schemes = get_local_scheme_list(schemes=schemes)
+    add_or_check_new_profiles(schemes)
