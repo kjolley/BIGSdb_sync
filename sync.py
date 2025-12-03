@@ -574,6 +574,8 @@ def add_or_check_new_profiles(schemes: List[int]):
         scheme_info = config.script.datastore.get_scheme_info(
             scheme_id, {"get_pk": True}
         )
+        if scheme_info is None:
+            continue
         pk = scheme_info.get("primary_key")
         if pk is None:
             config.script.logger.debug(
@@ -1171,7 +1173,8 @@ def check_schemes(schemes: Optional[List[int]] = None):
             config.script.logger.info(
                 f"Schemes not defined in local: {sorted(scheme_not_in_local)}"
             )
-        add_schemes(scheme_not_in_local)
+        if config.args.add_schemes:
+            add_schemes(scheme_not_in_local)
 
 
 def check_loci(schemes: Optional[List[int]] = None, loci: Optional[List[str]] = None):
