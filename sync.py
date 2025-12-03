@@ -605,7 +605,6 @@ def add_or_check_new_profiles(schemes: List[int]):
             url += f"&updated_reldate={config.args.reldate}"
         if config.args.page_size is not None:
             url += f"&page_size={config.args.page_size}"
-        # The include_records attribute has not yet been implemented in the API.
         while True:
             remote_profiles = get_route(url, config.session_provider)
             if (
@@ -618,24 +617,27 @@ def add_or_check_new_profiles(schemes: List[int]):
                 for profile in remote_profiles.get("profiles"):
                     if is_url(
                         profile
-                    ):  # Old API version does not yet support include_records attribute
+                    ):  # Old API version does not support include_records attribute
                         profile_record = get_route(profile, config.session_provider)
-                        if str(profile_record.get(pk)) in local_profile_ids:
-                            if should_check_existing:
-                                # TODO Check existing profile
-                                check_profile(profile_record)
-                        elif config.args.add_profiles:
-                            add_new_profile(
+                    else:
+                        profile_record = profile
+                    if str(profile_record.get(pk)) in local_profile_ids:
+                        if should_check_existing:
+                            check_profile(
                                 scheme_id=scheme_id,
-                                profile=profile_record,
+                                record=profile_record,
                                 user_ids=user_ids,
                                 scheme_info=scheme_info,
-                                fields=fields,
                             )
+                    elif config.args.add_profiles:
+                        add_new_profile(
+                            scheme_id=scheme_id,
+                            profile=profile_record,
+                            user_ids=user_ids,
+                            scheme_info=scheme_info,
+                            fields=fields,
+                        )
 
-                    else:
-                        # TODO Handle batch profiles
-                        pass
             else:
                 config.script.logger.error(
                     f"No profiles attribute for scheme {scheme_id}"
@@ -679,9 +681,7 @@ def add_new_profile(scheme_id, profile, user_ids, scheme_info=None, fields=None)
         }
     )
     for allele in profile.get("alleles", []):
-        if is_url(
-            allele
-        ):  # Old API version does not yet support allele_ids_only attribute
+        if is_url(allele):  # Old API version does not support allele_ids_only attribute
             parts = urlparse(allele).path.split("/")
             locus = parts[parts.index("loci") + 1]
             allele_id = parts[parts.index("alleles") + 1]
@@ -739,6 +739,89 @@ def add_new_profile(scheme_id, profile, user_ids, scheme_info=None, fields=None)
         raise DBError(
             f"INSERT failed adding sequence {scheme_info.get('name')}: {pk}-{profile.get(pk)}: {e}"
         ) from e
+
+
+def check_profile(scheme_id, record, user_ids, scheme_info=None, fields=None):
+    if scheme_info is None:
+        scheme_info = config.script.datastore.get_scheme_info(
+            scheme_id, {"get_pk": True}
+        )
+    pk = scheme_info.get("primary_key")
+    if fields is None:
+        fields = config.script.datastore.get_scheme_fields(scheme_id)
+    db = config.script.db
+    profile_fields = [
+        "sender",
+        "curator",
+        "date_entered",
+        "datestamp",
+    ]
+    profile_fields.extend(fields)
+    sender, curator = check_record_users(record, user_ids)
+    record_copy = record.copy()
+    record_copy["sender"] = sender
+    record_copy["curator"] = curator
+    scheme_table = f"mv_scheme_{scheme_id}"
+    local_record = config.script.datastore.run_query(
+        f"SELECT * FROM {scheme_table} WHERE {pk}='%s'",
+        record.get(pk),
+        {"fetch": "row_hashref"},
+    )
+    remote_profile = []
+    for allele in record.get("alleles"):
+        if is_url(allele):
+            allele_id = extract_last_value_from_url(allele)
+        else:
+            allele_id = allele.get("allele_id")
+        remote_profile.append(str(allele_id))
+
+    config.script.logger.debug(
+        f"Checking {scheme_info.get('name')} - {pk}-{record.get(pk)}."
+    )
+
+    different_fields = []
+    is_different = False
+
+    for field in profile_fields:
+        if field in ["date_entered", "datestamp"]:
+            local_record[field] = local_record.get(field).isoformat()
+        if str(record_copy.get(field)) != str(local_record.get(field.lower())):
+            different_fields.append(field)
+    if remote_profile != local_record.get("profile"):
+        is_different = True
+        different_fields.append("profile")
+
+    if len(different_fields) > 0:
+        config.script.logger.info(
+            f"{scheme_info.get('name')} - {pk}-{record.get(pk)} has changed (fields: {different_fields})."
+        )
+        is_different = True
+    if is_different:
+        delete_profile(scheme_id, record.get(pk))
+        config.script.logger.info(
+            f"Deleted {scheme_info.get('name')} - {pk}-{record.get(pk)}."
+        )
+        add_new_profile(
+            scheme_id=scheme_id,
+            profile=record,
+            user_ids=user_ids,
+            scheme_info=scheme_info,
+            fields=fields,
+        )
+
+
+def delete_profile(scheme_id, profile_id):
+    db = config.script.db
+    try:
+        with db.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM profiles WHERE (scheme_id,profile_id)=(%s,%s)",
+                [scheme_id, str(profile_id)],
+            )
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        raise DBError(f"Failed to delete profile record: {e}") from e
 
 
 def is_url(value):
