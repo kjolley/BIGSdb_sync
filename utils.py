@@ -75,6 +75,11 @@ def parse_args():
     )
     parser.add_argument("--loci", required=False, help="Comma-separated list of loci.")
     parser.add_argument(
+        "--loci_with_no_alleles_only",
+        action="store_true",
+        help="Only add alleles for loci that have no local alleles defined (useful after adding new loci)",
+    )
+    parser.add_argument(
         "--log_file",
         required=False,
         default="/var/log/bigsdb_sync.log",

@@ -498,8 +498,12 @@ def add_or_check_new_seqs(loci: List[str]):
                 locus,
                 {"fetch": "all_arrayref", "slice": {}},
             )
+
         local_allele_ids = {seq["allele_id"] for seq in local_seqs}
         if not config.args.add_seqs and len(local_allele_ids) == 0:
+            continue
+
+        if config.args.loci_with_no_alleles_only and len(local_allele_ids) > 0:
             continue
 
         url = f"{config.args.api_db_url}/loci/{locus}/alleles?include_records=1"
