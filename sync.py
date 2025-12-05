@@ -571,6 +571,8 @@ def add_or_check_new_seqs(loci: List[str]):
 
 
 def add_or_check_new_profiles(schemes: List[int]):
+    if schemes is None:
+        return
     users = get_local_users()
     user_ids = {user["id"] for user in users}
     should_check_existing = should_check_existing_profiles()
@@ -739,8 +741,12 @@ def add_new_profile(scheme_id, profile, user_ids, scheme_info=None, fields=None)
         if "not present" in str(e):
             config.script.logger.error(
                 f"Cannot add {scheme_info.get('name')}: {pk}-{profile.get(pk)} - "
-                "Constituent alleles not defined (use --add_seqs)."
+                f"Constituent alleles not defined (use --add_seqs)."
             )
+            config.script.logger.debug(e)
+            # TODO Check profile for missing alleles (most likely to be 'N').
+            # Add these then attempt to re-add profile once.
+
             return
         raise DBError(
             f"INSERT failed adding sequence {scheme_info.get('name')}: {pk}-{profile.get(pk)}: {e}"
@@ -1231,4 +1237,4 @@ def update_seqs(schemes: Optional[List[int]] = None, loci: Optional[List[str]] =
 
 def update_profiles(schemes: Optional[List[int]] = None):
     local_schemes = get_local_scheme_list(schemes=schemes)
-    add_or_check_new_profiles(schemes)
+    add_or_check_new_profiles(local_schemes)
