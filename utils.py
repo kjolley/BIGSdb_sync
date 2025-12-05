@@ -69,6 +69,13 @@ def parse_args():
     )
     parser.add_argument("--db", required=True, help="Local database config name.")
     parser.add_argument(
+        "--delay",
+        required=False,
+        default=0,
+        type=int_in_range(0, 60),
+        help="Add a delay (in seconds) between API calls (default 0).",
+    )
+    parser.add_argument(
         "--key_name",
         required=True,
         help="Name of API key - use a different name for each site.",

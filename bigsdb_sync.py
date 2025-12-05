@@ -72,7 +72,7 @@ def main():
                 f"Remote db type: {remote_db_type}; Local db type: {local_db_type}. "
                 "DATABASE MISMATCH!"
             )
-
+        sync.set_delay(config.args.delay)
         if local_db_type == "seqdef":
             sync.update_seqdef()
         else:

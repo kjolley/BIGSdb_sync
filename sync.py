@@ -19,7 +19,7 @@ import sys
 from typing import List, Optional
 
 import config
-from api_client import get_route
+from api_client import get_route, set_delay
 from datetime import datetime
 from collections import Counter
 from urllib.parse import urlparse
@@ -488,13 +488,13 @@ def add_or_check_new_seqs(loci: List[str]):
     for locus in loci:
         if config.args.check_seqs or config.args.update_seqs:
             local_seqs = config.script.datastore.run_query(
-                "SELECT * FROM sequences WHERE locus=%s ORDER BY allele_id",
+                "SELECT * FROM sequences WHERE locus=%s AND allele_id NOT IN ('N','0','P') ORDER BY allele_id",
                 locus,
                 {"fetch": "all_arrayref", "slice": {}},
             )
         else:
             local_seqs = config.script.datastore.run_query(
-                "SELECT allele_id FROM sequences WHERE locus=%s ORDER BY allele_id",
+                "SELECT allele_id FROM sequences WHERE locus=%s AND allele_id NOT IN ('N','0','P') ORDER BY allele_id",
                 locus,
                 {"fetch": "all_arrayref", "slice": {}},
             )

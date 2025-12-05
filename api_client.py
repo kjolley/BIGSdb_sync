@@ -26,6 +26,14 @@ from oauth_utils import get_client_credentials, get_new_session_token
 from rauth import OAuth1Session
 from response_utils import get_response_content
 
+_last_call_time = None  # module-level memory
+_delay = 0  # default, overridden by caller when desired
+
+
+def set_delay(seconds: int):
+    global _delay
+    _delay = max(0, min(60, seconds))
+
 
 def is_valid_json(json_string):
     try:
@@ -50,6 +58,14 @@ def trim_url_args(url):
 
 
 def get_route(url, token_provider, method="GET", json_body=None):
+    global _last_call_time
+    if _delay > 0 and _last_call_time is not None:
+        elapsed = time.time() - _last_call_time
+        if elapsed < _delay:
+            time.sleep(_delay - elapsed)
+
+    _last_call_time = time.time()
+
     config.script.logger.debug(f"URL: {url}")
     if json_body is None:
         json_body = {}
