@@ -676,7 +676,9 @@ def add_or_check_new_profiles(schemes: List[int]):
                 break
 
 
-def add_new_profile(scheme_id, profile, user_ids, scheme_info=None, fields=None):
+def add_new_profile(
+    scheme_id, profile, user_ids, scheme_info=None, fields=None, attempt=None
+):
     if scheme_info is None:
         scheme_info = config.script.datastore.get_scheme_info(
             scheme_id, {"get_pk": True}
@@ -743,6 +745,8 @@ def add_new_profile(scheme_id, profile, user_ids, scheme_info=None, fields=None)
                     ],
                 }
             )
+    attempt = 0 if attempt is None else attempt
+    attempt += 1
     try:
         with db.cursor() as cursor:
             for insert in inserts:
@@ -754,18 +758,48 @@ def add_new_profile(scheme_id, profile, user_ids, scheme_info=None, fields=None)
     except Exception as e:
         db.rollback()
         if "not present" in str(e):
+            if attempt < 2:
+                add_missing_N_alleles(profile, user_ids)
+                add_new_profile(
+                    scheme_id=scheme_id,
+                    profile=profile,
+                    user_ids=user_ids,
+                    scheme_info=scheme_info,
+                    fields=fields,
+                    attempt=1,
+                )
             config.script.logger.error(
                 f"Cannot add {scheme_info.get('name')}: {pk}-{profile.get(pk)} - "
                 f"Constituent alleles not defined (use --add_seqs)."
             )
             config.script.logger.debug(e)
-            # TODO Check profile for missing alleles (most likely to be 'N').
-            # Add these then attempt to re-add profile once.
 
             return
         raise DBError(
             f"INSERT failed adding sequence {scheme_info.get('name')}: {pk}-{profile.get(pk)}: {e}"
         ) from e
+
+
+def add_missing_N_alleles(profile, user_ids):
+    alleles = profile.get("alleles")
+    for designation in alleles:
+        allele_id = designation.get("allele_id")
+        if allele_id in ("N", "0"):
+            locus = designation.get("locus")
+            if not config.script.datastore.run_query(
+                "SELECT EXISTS (SELECT * FROM sequences WHERE (locus,allele_id)=(%s,%s))",
+                [locus, allele_id],
+            ):
+                url = f"{config.args.api_db_url}/loci/{locus}/alleles/{allele_id}"
+                seq = get_route(url, config.session_provider)
+                add_new_seq(
+                    locus=locus,
+                    seq=seq,
+                    user_ids=user_ids,
+                    extended_att=[],
+                    savs=[],
+                    snps=[],
+                )
 
 
 def check_profile(scheme_id, record, user_ids, scheme_info=None, fields=None):
@@ -857,14 +891,22 @@ def is_url(value):
 
 def check_record_users(record, user_ids):
     try:
-        sender = int(extract_last_value_from_url(record.get("sender")))
-    except Exception:
-        raise APIError(f"Invalid sender value in remote record: {record}")
+        sender_url = record.get("sender")
+        if sender_url == None:
+            sender = 0
+        else:
+            sender = int(extract_last_value_from_url(sender_url))
+    except Exception as e:
+        raise APIError(f"Invalid sender value in remote record: {record}. {e}")
     if sender not in user_ids:
         add_user(record.get("sender"))
         user_ids.add(sender)
     try:
-        curator = int(extract_last_value_from_url(record.get("curator")))
+        curator_url = record.get("curator")
+        if curator_url == None:
+            curator = 0
+        else:
+            curator = int(extract_last_value_from_url(curator_url))
     except Exception:
         raise APIError(f"Invalid curator value in remote record: {record}")
     if curator not in user_ids:
@@ -1023,7 +1065,7 @@ def add_new_seq(locus, seq, user_ids, extended_att, savs, snps):
                 locus,
                 seq.get("allele_id"),
                 seq.get("sequence"),
-                seq.get("status"),
+                seq.get("status", ""),
                 seq.get("comments"),
                 seq.get("type_allele"),
                 sender,
