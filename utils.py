@@ -40,6 +40,14 @@ def parse_args():
         "codes are added to a scheme at a later date.",
     )
     parser.add_argument(
+        "--add_lincodes",
+        action="store_true",
+        help="Add LIN codes for defined profiles that are currently missing them. "
+        "This is only necessary if LIN codes have not been added when first defining profiles as "
+        "these should have been added at the same time as the profile if the LIN code scheme was "
+        "defined at the time.",
+    )
+    parser.add_argument(
         "--add_loci",
         action="store_true",
         help="Set up new loci if they do not exist in local database.",
@@ -68,6 +76,11 @@ def parse_args():
         required=False,
         help="URL to BIGSdb script on target web site.",
     ),
+    parser.add_argument(
+        "--check_lincodes",
+        action="store_true",
+        help="Warn of changes to LIN codes of existing profiles.",
+    )
     parser.add_argument(
         "--check_profiles",
         action="store_true",
@@ -138,6 +151,11 @@ def parse_args():
     parser.add_argument(
         "--verbose", action="store_true", help="Provide more detailed output."
     ),
+    parser.add_argument(
+        "--update_lincodes",
+        action="store_true",
+        help="Update LIN codes if they have changed.",
+    )
     parser.add_argument(
         "--update_profiles",
         action="store_true",

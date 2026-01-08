@@ -495,6 +495,12 @@ def should_check_existing_profiles():
     return False
 
 
+def should_check_existing_lincodes():
+    if config.args.check_lincodes or config.args.update_lincodes:
+        return True
+    return False
+
+
 def add_or_check_new_seqs(loci: List[str]):
     users = get_local_users()
     user_ids = {user["id"] for user in users}
@@ -583,6 +589,116 @@ def add_or_check_new_seqs(loci: List[str]):
                     break
             else:
                 break
+
+
+def add_or_check_new_lincodes(schemes: List[int]):
+    if schemes is None:
+        return
+    should_check_existing = should_check_existing_lincodes()
+    for scheme_id in schemes:
+        if not config.script.datastore.run_query(
+            "SELECT EXISTS(SELECT * FROM lincode_schemes WHERE scheme_id=%s)", scheme_id
+        ):
+            continue
+
+        local_lincodes = config.script.datastore.run_query(
+            "SELECT profile_id,lincode FROM lincodes WHERE scheme_id=%s",
+            scheme_id,
+            {"fetch": "all_arrayref", "slice": {}},
+        )
+        local_lincode_ids = {int(lincode["profile_id"]) for lincode in local_lincodes}
+        scheme_info = config.script.datastore.get_scheme_info(
+            scheme_id, {"get_pk": True}
+        )
+        if scheme_info is None:
+            continue
+        pk = scheme_info.get("primary_key")
+        if pk is None:
+            config.script.logger.debug(
+                f"Scheme {scheme_id} has no primary key - skipping."
+            )
+            continue
+        local_profiles = config.script.datastore.run_query(
+            "SELECT profile_id FROM profiles WHERE scheme_id=%s",
+            scheme_id,
+            {"fetch": "col_arrayref"},
+        )
+        local_profile_ids = {int(profile_id) for profile_id in local_profiles}
+        if not should_check_existing and len(local_profile_ids) == len(
+            local_lincode_ids
+        ):
+            continue
+
+        url = f"{config.args.api_db_url}/schemes/{scheme_id}/lincodes"
+        if config.args.page_size is not None:
+            url += f"&page_size={config.args.page_size}"
+        finish = 0
+        while True and not finish:
+            remote_lincodes = get_route(url, config.session_provider)
+            if remote_lincodes.get("paging"):
+                if remote_lincodes.get("lincodes"):
+                    for lincode in remote_lincodes.get("lincodes"):
+
+                        if lincode.get(pk) in local_lincode_ids:
+                            if should_check_existing:
+                                pass
+                                # TODO Add check of existing LIN code.
+                                # check_lincode(
+                                #     scheme_id=scheme_id,
+                                #     record=profile_record,
+                                #     user_ids=user_ids,
+                                #     scheme_info=scheme_info,
+                                # )
+                        elif config.args.add_lincodes:
+                            if lincode.get(pk) not in local_profile_ids:
+                                continue
+                            add_new_lincode(
+                                scheme_id=scheme_id,
+                                profile_id=lincode.get(pk),
+                                lincode=lincode.get("lincode"),
+                            )
+                            local_lincode_ids.add(lincode.get(pk))
+                            print(len(local_lincode_ids))
+                            if not should_check_existing and len(
+                                local_profile_ids
+                            ) == len(local_lincode_ids):
+                                finish = 1
+                if remote_lincodes.get("paging").get("next"):
+                    url = remote_lincodes.get("paging").get("next")
+                    continue
+                else:
+                    break
+            else:
+                break
+
+
+def add_new_lincode(scheme_id, profile_id, lincode):
+    inserts = []
+    lincode_array = lincode.split("_")
+    int_lincode = [int(numeric_string) for numeric_string in lincode_array]
+    scheme_info = config.script.datastore.get_scheme_info(scheme_id, {"get_pk": True})
+    pk = scheme_info.get("primary_key")
+    inserts.append(
+        {
+            "qry": "INSERT INTO lincodes (scheme_id,profile_id, lincode,curator,datestamp) "
+            "VALUES (%s,%s,%s,%s,%s)",
+            "values": [scheme_id, profile_id, int_lincode, 0, "now"],
+        }
+    )
+    db = config.script.db
+    try:
+        with db.cursor() as cursor:
+            for insert in inserts:
+                cursor.execute(insert.get("qry"), insert.get("values"))
+        db.commit()
+        config.script.logger.info(
+            f"{scheme_info.get('name')}: {pk}-{profile_id} LIN code added."
+        )
+    except Exception as e:
+        db.rollback()
+        raise DBError(
+            f"INSERT failed adding LINcode {scheme_info.get('name')}: {pk}-{profile_id}: {e}"
+        ) from e
 
 
 def add_or_check_new_profiles(schemes: List[int]):
@@ -1274,6 +1390,9 @@ def update_seqdef():
         check_schemes(schemes=selected_schemes)
         update_profiles(schemes=selected_schemes)
 
+    if config.args.add_lincodes:
+        update_lincodes(schemes=selected_schemes)
+
 
 def check_schemes(schemes: Optional[List[int]] = None):
     remote_schemes = get_remote_scheme_list(schemes=schemes)
@@ -1417,3 +1536,8 @@ def update_seqs(schemes: Optional[List[int]] = None, loci: Optional[List[str]] =
 def update_profiles(schemes: Optional[List[int]] = None):
     local_schemes = get_local_scheme_list(schemes=schemes)
     add_or_check_new_profiles(local_schemes)
+
+
+def update_lincodes(schemes: Optional[List[int]] = None):
+    local_schemes = get_local_scheme_list(schemes=schemes)
+    add_or_check_new_lincodes(local_schemes)
