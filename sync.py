@@ -745,6 +745,20 @@ def add_new_profile(
                     ],
                 }
             )
+    if profile.get("LINcode") and config.script.datastore.run_query(
+        "SELECT EXISTS(SELECT * FROM lincode_schemes WHERE scheme_id=%s)", scheme_id
+    ):
+
+        lincode = profile.get("LINcode").split("_")
+        int_lincode = [int(numeric_string) for numeric_string in lincode]
+        inserts.append(
+            {
+                "qry": "INSERT INTO lincodes (scheme_id,profile_id, lincode,curator,datestamp) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                "values": [scheme_id, profile.get(pk), int_lincode, curator, "now"],
+            }
+        )
+
     attempt = 0 if attempt is None else attempt
     attempt += 1
     try:
