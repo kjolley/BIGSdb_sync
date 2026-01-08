@@ -1,7 +1,7 @@
 # Client software for synchronising sequence definition and isolate databases
 # with a remote BIGSdb installation via the API
 # Written by Keith Jolley
-# Copyright (c) 2025, University of Oxford
+# Copyright (c) 2025-2026, University of Oxford
 # E-mail: keith.jolley@biology.ox.ac.uk
 #
 # BIGSdb_sync is free software: you can redistribute it and/or modify
@@ -32,6 +32,13 @@ from errors import ConfigError
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--add_lincode_schemes",
+        action="store_true",
+        help="Add LIN code scheme to existing scheme. This would have been added automatically "
+        "when the scheme was set up if the LIN code scheme existed. This should be used when LIN "
+        "codes are added to a scheme at a later date.",
+    )
     parser.add_argument(
         "--add_loci",
         action="store_true",

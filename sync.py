@@ -1,7 +1,7 @@
 # Client software for synchronising sequence definition and isolate databases
 # with a remote BIGSdb installation via the API
 # Written by Keith Jolley
-# Copyright (c) 2025, University of Oxford
+# Copyright (c) 2025-2026, University of Oxford
 # E-mail: keith.jolley@biology.ox.ac.uk
 #
 # BIGSdb_sync is free software: you can redistribute it and/or modify
@@ -268,6 +268,21 @@ def add_schemes(schemes: List[int]):
                         ],
                     }
                 )
+        lincodes = scheme_info.get("lincodes")
+        if lincodes:
+            inserts.append(
+                {
+                    "qry": "INSERT INTO lincode_schemes (scheme_id,thresholds,max_missing,curator,datestamp) "
+                    "VALUES (%s,%s,%s,%s,%s)",
+                    "values": [
+                        scheme_id,
+                        lincodes.get("thresholds"),
+                        lincodes.get("max_missing"),
+                        0,
+                        "now",
+                    ],
+                }
+            )
         try:
             with db.cursor() as cursor:
                 for insert in inserts:
@@ -1145,6 +1160,8 @@ def update_seqdef():
 
     if config.args.add_schemes:
         check_schemes(schemes=selected_schemes)
+    if config.args.add_lincode_schemes:
+        check_lincode_schemes(schemes=selected_schemes)
 
     if config.args.add_seqs or config.args.check_seqs or config.args.update_seqs:
         if config.args.loci:
@@ -1185,6 +1202,73 @@ def check_schemes(schemes: Optional[List[int]] = None):
             )
         if config.args.add_schemes:
             add_schemes(scheme_not_in_local)
+
+
+def check_lincode_schemes(schemes: Optional[List[int]] = None):
+    local_schemes = get_local_scheme_list(schemes=schemes)
+    for scheme_id in local_schemes:
+        url = f"{config.args.api_db_url}/schemes/{scheme_id}"
+        scheme_info = get_route(url, config.session_provider)
+        remote_lincode_scheme = scheme_info.get("lincodes")
+        if remote_lincode_scheme is None:
+            return
+        local_lincode_scheme = config.script.datastore.run_query(
+            "SELECT * FROM lincode_schemes WHERE scheme_id=%s", scheme_id
+        )
+        db = config.script.db
+        if local_lincode_scheme:
+            if (
+                local_lincode_scheme.get("thresholds")
+                != remote_lincode_scheme.get("thresholds")
+            ) or (
+                local_lincode_scheme.get("max_missing")
+                != remote_lincode_scheme.get("max_missing")
+            ):
+                config.script.logger.info(
+                    f"LIN code scheme for scheme {scheme_id} has changed. Recreating..."
+                )
+                try:
+
+                    with db.cursor() as cursor:
+                        cursor.execute(
+                            "DELETE FROM lincodes WHERE scheme_id=%s", [scheme_id]
+                        )
+                        cursor.execute(
+                            "DELETE FROM lincode_schemes WHERE scheme_id=%s",
+                            [scheme_id],
+                        )
+                        db.commit()
+                        config.script.logger.info(
+                            f"LIN code scheme for scheme: {scheme_id} ({scheme_info.get('description')}) deleted."
+                        )
+                except Exception as e:
+                    db.rollback()
+                    raise DBError(f"Failed to delete LIN code scheme: {e}") from e
+            else:
+                continue
+        try:
+            with db.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO lincode_schemes (scheme_id,thresholds,max_missing,curator,datestamp) "
+                    "VALUES (%s,%s,%s,%s,%s)",
+                    [
+                        scheme_id,
+                        remote_lincode_scheme.get("thresholds"),
+                        remote_lincode_scheme.get("max_missing"),
+                        0,
+                        "now",
+                    ],
+                )
+            db.commit()
+
+            config.script.logger.info(
+                f"LIN code scheme for scheme: {scheme_id} ({scheme_info.get('description')}) added."
+            )
+        except Exception as e:
+            db.rollback()
+            raise DBError(
+                f"INSERT failed adding LIN code scheme {scheme_id}: {e}"
+            ) from e
 
 
 def check_loci(schemes: Optional[List[int]] = None, loci: Optional[List[str]] = None):
