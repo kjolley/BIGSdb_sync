@@ -44,8 +44,17 @@ def parse_args():
         action="store_true",
         help="Set up new loci if they do not exist in local database.",
     ),
-    parser.add_argument("--add_profiles", action="store_true", help="Add new profiles"),
-    parser.add_argument("--add_schemes", action="store_true", help="Add new schemes"),
+    parser.add_argument(
+        "--add_missing_profile_alleles",
+        action="store_true",
+        help="Add alleles that have not been defined when adding profiles. "
+        "Note that you should still run --add_seqs regularly as this is much more efficient "
+        "as it will download multiple alleles in a batch rather than individually.",
+    )
+    parser.add_argument(
+        "--add_profiles", action="store_true", help="Add new profiles."
+    ),
+    parser.add_argument("--add_schemes", action="store_true", help="Add new schemes."),
     parser.add_argument(
         "--add_seqs", action="store_true", help="Add new allele/variant sequences."
     )

@@ -2,7 +2,7 @@
 # Client software for synchronising sequence definition and isolate databases
 # with a remote BIGSdb installation via the API
 # Written by Keith Jolley
-# Copyright (c) 2025, University of Oxford
+# Copyright (c) 2025-2026, University of Oxford
 # E-mail: keith.jolley@biology.ox.ac.uk
 #
 # BIGSdb_sync is free software: you can redistribute it and/or modify

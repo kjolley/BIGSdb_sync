@@ -760,6 +760,8 @@ def add_new_profile(
         if "not present" in str(e):
             if attempt < 2:
                 add_missing_N_alleles(profile, user_ids)
+                if config.args.add_missing_profile_alleles:
+                    add_missing_alleles(profile, user_ids)
                 add_new_profile(
                     scheme_id=scheme_id,
                     profile=profile,
@@ -768,9 +770,10 @@ def add_new_profile(
                     fields=fields,
                     attempt=1,
                 )
+                return
             config.script.logger.error(
                 f"Cannot add {scheme_info.get('name')}: {pk}-{profile.get(pk)} - "
-                f"Constituent alleles not defined (use --add_seqs)."
+                f"Constituent alleles not defined (use --add_seqs or --add_missing_profile_alleles)."
             )
             config.script.logger.debug(e)
 
@@ -780,11 +783,47 @@ def add_new_profile(
         ) from e
 
 
+def add_missing_alleles(profile, user_ids):
+    alleles = profile.get("alleles")
+    for designation in alleles:
+        allele_id = designation.get("allele_id")
+        locus = designation.get("locus")
+        if not config.script.datastore.run_query(
+            "SELECT EXISTS (SELECT * FROM sequences WHERE (locus,allele_id)=(%s,%s))",
+            [locus, allele_id],
+        ):
+            url = f"{config.args.api_db_url}/loci/{locus}/alleles/{allele_id}"
+            seq = get_route(url, config.session_provider)
+            extended_att = config.script.datastore.run_query(
+                "SELECT * FROM locus_extended_attributes WHERE locus=?",
+                locus,
+                {"fetch": "all_arrayref", "slice": {}},
+            )
+            savs = config.script.datastore.run_query(
+                "SELECT * FROM peptide_mutations WHERE locus=?",
+                locus,
+                {"fetch": "all_arrayref", "slice": {}},
+            )
+            snps = config.script.datastore.run_query(
+                "SELECT * FROM dna_mutations WHERE locus=?",
+                locus,
+                {"fetch": "all_arrayref", "slice": {}},
+            )
+            add_new_seq(
+                locus=locus,
+                seq=seq,
+                user_ids=user_ids,
+                extended_att=extended_att,
+                savs=savs,
+                snps=snps,
+            )
+
+
 def add_missing_N_alleles(profile, user_ids):
     alleles = profile.get("alleles")
     for designation in alleles:
         allele_id = designation.get("allele_id")
-        if allele_id in ("N", "0"):
+        if allele_id in ("N", "0", "P"):
             locus = designation.get("locus")
             if not config.script.datastore.run_query(
                 "SELECT EXISTS (SELECT * FROM sequences WHERE (locus,allele_id)=(%s,%s))",
