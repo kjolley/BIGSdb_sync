@@ -1,7 +1,7 @@
 # Client software for synchronising sequence definition and isolate databases
 # with a remote BIGSdb installation via the API
 # Written by Keith Jolley
-# Copyright (c) 2025, University of Oxford
+# Copyright (c) 2025-2026, University of Oxford
 # E-mail: keith.jolley@biology.ox.ac.uk
 #
 # BIGSdb_sync is free software: you can redistribute it and/or modify
@@ -149,7 +149,7 @@ def get_route(url, token_provider, method="GET", json_body=None):
                     f"Attempt to connect to {url} failed {route_attempts} times."
                 )
             config.script.logger.warning(
-                f"Network error when called {url}: {r.status_code} (attempt {route_attempts}/{config.MAX_ROUTE_ATTEMPTS})"
+                f"Network error when calling {url}: {r.status_code} (attempt {route_attempts}/{config.MAX_ROUTE_ATTEMPTS})"
             )
             time.sleep(route_fail_delay)
             route_fail_delay += 5

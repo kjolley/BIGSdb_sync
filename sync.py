@@ -623,7 +623,10 @@ def add_or_check_new_lincodes(schemes: List[int]):
             scheme_id,
             {"fetch": "col_arrayref"},
         )
+
         local_profile_ids = {int(profile_id) for profile_id in local_profiles}
+        if len(local_profile_ids) == 0:
+            continue
         if not should_check_existing and len(local_profile_ids) == len(
             local_lincode_ids
         ):
@@ -638,17 +641,13 @@ def add_or_check_new_lincodes(schemes: List[int]):
             if remote_lincodes.get("paging"):
                 if remote_lincodes.get("lincodes"):
                     for lincode in remote_lincodes.get("lincodes"):
-
                         if lincode.get(pk) in local_lincode_ids:
                             if should_check_existing:
-                                pass
-                                # TODO Add check of existing LIN code.
-                                # check_lincode(
-                                #     scheme_id=scheme_id,
-                                #     record=profile_record,
-                                #     user_ids=user_ids,
-                                #     scheme_info=scheme_info,
-                                # )
+                                check_lincode(
+                                    scheme_info=scheme_info,
+                                    profile_id=lincode.get(pk),
+                                    lincode=lincode.get("lincode"),
+                                )
                         elif config.args.add_lincodes:
                             if lincode.get(pk) not in local_profile_ids:
                                 continue
@@ -670,6 +669,29 @@ def add_or_check_new_lincodes(schemes: List[int]):
                     break
             else:
                 break
+
+
+def check_lincode(scheme_info, profile_id, lincode):
+    local_lincode = config.script.datastore.run_query(
+        "SELECT lincode FROM lincodes WHERE (scheme_id,profile_id)=(%s,%s)",
+        [scheme_info.get("id"), str(profile_id)],
+    )
+
+    local_lincode_str = "_".join(map(str, local_lincode))
+    if local_lincode_str != lincode:
+        config.script.logger.info(
+            f"LIN code for {scheme_info.get('name')} - {scheme_info.get('primary_key')}-{profile_id} has changed."
+        )
+        if config.args.update_lincodes:
+            delete_lincode(scheme_info.get("id"), profile_id)
+            config.script.logger.info(
+                f"Deleted LIN code for {scheme_info.get('name')} - {scheme_info.get('primary_key')}-{profile_id}."
+            )
+            add_new_lincode(
+                scheme_id=scheme_info.get("id"),
+                profile_id=profile_id,
+                lincode=lincode,
+            )
 
 
 def add_new_lincode(scheme_id, profile_id, lincode):
@@ -1026,7 +1048,7 @@ def check_profile(scheme_id, record, user_ids, scheme_info=None, fields=None):
             f"{scheme_info.get('name')} - {pk}-{record.get(pk)} has changed (fields: {different_fields})."
         )
         is_different = True
-    if is_different:
+    if is_different and config.args.update_profiles:
         delete_profile(scheme_id, record.get(pk))
         config.script.logger.info(
             f"Deleted {scheme_info.get('name')} - {pk}-{record.get(pk)}."
@@ -1052,6 +1074,20 @@ def delete_profile(scheme_id, profile_id):
     except Exception as e:
         db.rollback()
         raise DBError(f"Failed to delete profile record: {e}") from e
+
+
+def delete_lincode(scheme_id, profile_id):
+    db = config.script.db
+    try:
+        with db.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM lincodes WHERE (scheme_id,profile_id)=(%s,%s)",
+                [scheme_id, str(profile_id)],
+            )
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        raise DBError(f"Failed to delete LIN code: {e}") from e
 
 
 def is_url(value):
@@ -1390,7 +1426,11 @@ def update_seqdef():
         check_schemes(schemes=selected_schemes)
         update_profiles(schemes=selected_schemes)
 
-    if config.args.add_lincodes:
+    if (
+        config.args.add_lincodes
+        or config.args.check_lincodes
+        or config.args.update_lincodes
+    ):
         update_lincodes(schemes=selected_schemes)
 
 
