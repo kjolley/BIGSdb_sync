@@ -39,6 +39,12 @@ def parse_args():
         "when the LIN code scheme was first defined, but you can use this if they have been added later.",
     )
     parser.add_argument(
+        "--add_lincode_nicknames",
+        action="store_true",
+        help="Add LIN code prefix nicknames. The fields need to have been defined first "
+        "(use --add_lincode_fields) if they are not.",
+    )
+    parser.add_argument(
         "--add_lincode_schemes",
         action="store_true",
         help="Add LIN code scheme to existing scheme. This would have been added automatically "

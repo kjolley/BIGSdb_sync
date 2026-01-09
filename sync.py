@@ -1427,6 +1427,8 @@ def update_seqdef():
         check_lincode_schemes(schemes=selected_schemes)
     if config.args.add_lincode_fields:
         check_lincode_fields(schemes=selected_schemes)
+    if config.args.add_lincode_nicknames:
+        check_lincode_nicknames(schemes=selected_schemes)
 
     if config.args.add_seqs or config.args.check_seqs or config.args.update_seqs:
         if config.args.loci:
@@ -1564,7 +1566,8 @@ def check_lincode_fields(schemes: Optional[List[int]] = None):
                 if local_field:
                     if local_field.get("type") != remote_field.get("type"):
                         config.script.logger.info(
-                            f"LIN code field {remote_field.get('field')} for scheme {scheme_id} has changed. Recreating..."
+                            f"LIN code field {remote_field.get('field')} for scheme "
+                            f"{scheme_info.get('description')} has changed. Recreating..."
                         )
                         try:
 
@@ -1575,7 +1578,8 @@ def check_lincode_fields(schemes: Optional[List[int]] = None):
                                 )
                                 db.commit()
                                 config.script.logger.info(
-                                    f"LIN code field {remote_field.get('field')} for scheme {scheme_id} deleted."
+                                    f"LIN code field {remote_field.get('field')} for scheme "
+                                    f"{scheme_info.get('description')} deleted."
                                 )
                         except Exception as e:
                             db.rollback()
@@ -1602,13 +1606,98 @@ def check_lincode_fields(schemes: Optional[List[int]] = None):
                     db.commit()
 
                     config.script.logger.info(
-                        f"LIN code field {remote_field.get('field')} for scheme {scheme_id} added."
+                        f"LIN code field {remote_field.get('field')} for scheme {scheme_info.get('description')} added."
                     )
                 except Exception as e:
                     db.rollback()
                     raise DBError(
-                        f"INSERT failed adding LIN code scheme {scheme_id}: {e}"
+                        f"INSERT failed adding LIN code scheme field {remote_field.get('field')} "
+                        f"for scheme {scheme_info.get('description')}: {e}"
                     ) from e
+
+
+def check_lincode_nicknames(schemes: Optional[List[int]] = None):
+    local_schemes = get_local_scheme_list(schemes=schemes)
+    for scheme_id in local_schemes:
+        url = f"{config.args.api_db_url}/schemes/{scheme_id}"
+        scheme_info = get_route(url, config.session_provider)
+        lincodes = scheme_info.get("lincodes")
+        if lincodes and lincodes.get("nicknames"):
+            remote_nicknames = get_route(
+                lincodes.get("nicknames"), config.session_provider
+            )
+
+            if remote_nicknames is None or remote_nicknames.get("nicknames") is None:
+                return
+
+            for remote_nickname in remote_nicknames.get("nicknames", []):
+
+                local_nickname = config.script.datastore.run_query(
+                    "SELECT * FROM lincode_prefixes WHERE (scheme_id,prefix,field)=(%s,%s,%s)",
+                    [
+                        scheme_id,
+                        remote_nickname.get("prefix"),
+                        remote_nickname.get("field"),
+                    ],
+                    {"fetch": "row_hashref"},
+                )
+
+                db = config.script.db
+                if local_nickname:
+                    if local_nickname.get("value") != remote_nickname.get("nickname"):
+                        config.script.logger.info(
+                            f"LIN code nickname {remote_nickname.get('field')} prefix "
+                            f"{remote_nickname.get('prefix')} "
+                            f"for scheme {scheme_info.get('description')} has changed. Recreating..."
+                        )
+                        try:
+
+                            with db.cursor() as cursor:
+                                cursor.execute(
+                                    "DELETE FROM lincode_prefixes WHERE (scheme_id,prefix,field)=(%s,%s,%s)",
+                                    [
+                                        scheme_id,
+                                        remote_nickname.get("prefix"),
+                                        remote_nickname.get("field"),
+                                    ],
+                                )
+                                db.commit()
+                                config.script.logger.info(
+                                    f"LIN code nickname {remote_nickname.get('field')} prefix "
+                                    f"{remote_nickname.get('prefix')} "
+                                    f"for scheme {scheme_info.get('description')} deleted."
+                                )
+                        except Exception as e:
+                            db.rollback()
+                            raise DBError(
+                                f"Failed to delete LIN code nickname: {e}"
+                            ) from e
+                    else:
+                        continue
+
+                try:
+                    with db.cursor() as cursor:
+                        cursor.execute(
+                            "INSERT INTO lincode_prefixes (scheme_id,prefix,field,value,curator,datestamp) "
+                            "VALUES (%s,%s,%s,%s,%s,%s)",
+                            [
+                                scheme_id,
+                                remote_nickname.get("prefix"),
+                                remote_nickname.get("field"),
+                                remote_nickname.get("nickname"),
+                                0,
+                                "now",
+                            ],
+                        )
+                    db.commit()
+
+                    config.script.logger.info(
+                        f"LIN code nickname {remote_nickname.get('field')}: {remote_nickname.get('prefix')} "
+                        f"for scheme {scheme_id} added."
+                    )
+                except Exception as e:
+                    db.rollback()
+                    raise DBError(f"INSERT failed adding LIN code prefix: {e}") from e
 
 
 def check_loci(schemes: Optional[List[int]] = None, loci: Optional[List[str]] = None):
