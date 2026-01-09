@@ -283,6 +283,22 @@ def add_schemes(schemes: List[int]):
                     ],
                 }
             )
+            if lincodes.get("fields"):
+                for field in lincodes.get("fields"):
+                    inserts.append(
+                        {
+                            "qry": "INSERT INTO lincode_fields (scheme_id,field,type,display_order,curator,datestamp) "
+                            "VALUES (%s,%s,%s,%s,%s,%s)",
+                            "values": [
+                                scheme_id,
+                                field.get("field"),
+                                field.get("type"),
+                                field.get("display_order"),
+                                0,
+                                "now",
+                            ],
+                        }
+                    )
         try:
             with db.cursor() as cursor:
                 for insert in inserts:
@@ -1409,6 +1425,8 @@ def update_seqdef():
         check_schemes(schemes=selected_schemes)
     if config.args.add_lincode_schemes:
         check_lincode_schemes(schemes=selected_schemes)
+    if config.args.add_lincode_fields:
+        check_lincode_fields(schemes=selected_schemes)
 
     if config.args.add_seqs or config.args.check_seqs or config.args.update_seqs:
         if config.args.loci:
@@ -1523,6 +1541,74 @@ def check_lincode_schemes(schemes: Optional[List[int]] = None):
             raise DBError(
                 f"INSERT failed adding LIN code scheme {scheme_id}: {e}"
             ) from e
+
+
+def check_lincode_fields(schemes: Optional[List[int]] = None):
+    local_schemes = get_local_scheme_list(schemes=schemes)
+    for scheme_id in local_schemes:
+        url = f"{config.args.api_db_url}/schemes/{scheme_id}"
+        scheme_info = get_route(url, config.session_provider)
+        if scheme_info.get("lincodes") and scheme_info.get("lincodes").get("fields"):
+            remote_fields = scheme_info.get("lincodes").get("fields")
+
+            if remote_fields is None:
+                return
+            for remote_field in remote_fields:
+                local_field = config.script.datastore.run_query(
+                    "SELECT * FROM lincode_fields WHERE (scheme_id,field)=(%s,%s)",
+                    [scheme_id, remote_field.get("field")],
+                    {"fetch": "row_hashref"},
+                )
+
+                db = config.script.db
+                if local_field:
+                    if local_field.get("type") != remote_field.get("type"):
+                        config.script.logger.info(
+                            f"LIN code field {remote_field.get('field')} for scheme {scheme_id} has changed. Recreating..."
+                        )
+                        try:
+
+                            with db.cursor() as cursor:
+                                cursor.execute(
+                                    "DELETE FROM lincode_fields WHERE (scheme_id,field)=(%s,%s)",
+                                    [scheme_id, remote_field.get("field")],
+                                )
+                                db.commit()
+                                config.script.logger.info(
+                                    f"LIN code field {remote_field.get('field')} for scheme {scheme_id} deleted."
+                                )
+                        except Exception as e:
+                            db.rollback()
+                            raise DBError(
+                                f"Failed to delete LIN code field: {e}"
+                            ) from e
+                    else:
+                        continue
+
+                try:
+                    with db.cursor() as cursor:
+                        cursor.execute(
+                            "INSERT INTO lincode_fields (scheme_id,field,type,display_order,curator,datestamp) "
+                            "VALUES (%s,%s,%s,%s,%s,%s)",
+                            [
+                                scheme_id,
+                                remote_field.get("field"),
+                                remote_field.get("type"),
+                                remote_field.get("display_order"),
+                                0,
+                                "now",
+                            ],
+                        )
+                    db.commit()
+
+                    config.script.logger.info(
+                        f"LIN code field {remote_field.get('field')} for scheme {scheme_id} added."
+                    )
+                except Exception as e:
+                    db.rollback()
+                    raise DBError(
+                        f"INSERT failed adding LIN code scheme {scheme_id}: {e}"
+                    ) from e
 
 
 def check_loci(schemes: Optional[List[int]] = None, loci: Optional[List[str]] = None):

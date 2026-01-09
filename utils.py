@@ -33,6 +33,12 @@ from errors import ConfigError
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--add_lincode_fields",
+        action="store_true",
+        help="Add an LIN code fields defined for a LIN code scheme. These should have been added "
+        "when the LIN code scheme was first defined, but you can use this if they have been added later.",
+    )
+    parser.add_argument(
         "--add_lincode_schemes",
         action="store_true",
         help="Add LIN code scheme to existing scheme. This would have been added automatically "
