@@ -250,8 +250,8 @@ def add_schemes(schemes: List[int]):
                 inserts.append(
                     {
                         "qry": "INSERT INTO scheme_fields(scheme_id,field,type,value_regex,description,"
-                        "option_list,field_order,index,dropdown,primary_key,curator,datestamp) VALUES "
-                        "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        "option_list,field_order,index,dropdown,primary_key,submissions,curator,datestamp) VALUES "
+                        "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                         "values": [
                             scheme_id,
                             field_info.get("field"),
@@ -261,8 +261,9 @@ def add_schemes(schemes: List[int]):
                             field_info.get("option_list"),
                             field_info.get("field_order"),
                             field_info.get("index"),
-                            field_info.get("dropdown"),
+                            field_info.get("dropdown", False),
                             field_info.get("primary_key"),
+                            field_info.get("submissions", False),
                             0,
                             "now",
                         ],
