@@ -574,7 +574,7 @@ def add_or_check_new_seqs(loci: List[str]):
                 and len(local_allele_ids) >= remote_seqs.get("records", 0)
             ):
                 break
-            if remote_seqs.get("alleles"):
+            if remote_seqs.get("alleles") is not None:
                 for seq in remote_seqs.get("alleles"):
                     if seq.get("allele_id") in local_allele_ids:
                         if should_check_existing:
@@ -791,7 +791,7 @@ def add_or_check_new_profiles(schemes: List[int]):
                 and len(local_profile_ids) >= remote_profiles.get("records", 0)
             ):
                 break
-            if remote_profiles.get("profiles"):
+            if remote_profiles.get("profiles") is not None:
                 for profile in remote_profiles.get("profiles"):
                     if is_url(
                         profile
