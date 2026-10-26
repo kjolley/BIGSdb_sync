@@ -78,7 +78,7 @@ def add_user(url: str):
                 "date_entered,datestamp,curator) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 [
                     user.get("id"),
-                    f"user-{user.get('id')}",
+                    f"{config.args.username_prefix}{user.get('id')}",
                     user.get("surname"),
                     user.get("first_name"),
                     user.get("affiliation"),

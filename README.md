@@ -123,3 +123,17 @@ Note that the `--schemes` filter here requires that the schemes used are
 defined in the local database. This is different from the `--add_new_loci`
 argument which necessarily uses schemes defined remotely (since the loci do
 not exist locally yet and so cannot belong to a local scheme).
+
+## Username prefix
+When users are added to the local database, usernames are generated using the 
+remote user ID. By default, these take the form `user-1`, `user-2`, etc.
+
+Use the `--username_prefix` option to specify a different prefix, for example:
+
+```shell
+--username_prefix PubMLST_user
+```
+
+This will generate usernames in the form `PubMLST_user1`, `PubMLST_user2`, etc.
+
+The prefix is applied only when new users are added. Existing usernames are not modified.

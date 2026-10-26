@@ -178,6 +178,11 @@ def parse_args():
         action="store_true",
         help="Update sequence attributes if they have changed.",
     )
+    parser.add_argument(
+        "--username_prefix",
+        default="user-",
+        help="Prefix for generated usernames (default: user-).",
+    )
     return parser.parse_args()
 
 
